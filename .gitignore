@@ -1,0 +1,11 @@
+.env
+.pgdata/
+data/
+__pycache__/
+.venv/
+node_modules/
+dist/
+*.pyc
+.DS_Store
+/DESIGN.md
+/SEARCH_DESIGN.md
