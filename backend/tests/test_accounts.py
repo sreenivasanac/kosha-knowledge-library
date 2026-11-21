@@ -430,6 +430,7 @@ def test_demo_refuses_by_allow_list(user, session, demo_mode):
     config = TestClient(app).get("/api/public-config").json()
     assert config["demo"]["email"] == "demo@example.test" and config["demo"]["password"] == "demo-password" and config["demo"]["notice"]
     assert config["signups"] == "closed"
+    assert config["demo"]["searches"] == []  # the suggested searches come with the bundle; none is loaded here
     visitor = browser({"email": "demo@example.test", "password": "demo-password"})
     assert visitor.get("/api/auth/me").json()["demo"] is True
     for method, path in REFUSED:

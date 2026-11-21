@@ -480,6 +480,13 @@ function StorageForm({ stored, withMigrate }: { stored: StorageConfig; withMigra
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const save = useAction();
   const test = useAction();
+  /** Choosing the other storage drops the last test result and error: they were about the one left. */
+  const pick = (b: Backend) => {
+    setBackend(b);
+    setResult(null);
+    save.clear();
+    test.clear();
+  };
   const text = (key: 'endpoint' | 'region' | 'bucket' | 'prefix' | 'public_base_url', label: string, placeholder = '') => (
     <label className="grid gap-1 text-sm font-medium">
       {label}
@@ -510,14 +517,14 @@ function StorageForm({ stored, withMigrate }: { stored: StorageConfig; withMigra
       <fieldset className="space-y-1.5">
         <legend className="mb-1 text-sm font-medium">Where files go</legend>
         <label className="flex items-start gap-2 text-sm">
-          <input type="radio" name="storage-backend" className="mt-1 accent-(--accent)" checked={backend === 'local'} onChange={() => setBackend('local')} />
+          <input type="radio" name="storage-backend" className="mt-1 accent-(--accent)" checked={backend === 'local'} onChange={() => pick('local')} />
           <span>
             This server’s disk
             <code className="block break-all text-xs text-ink-3">{stored.local_dir}</code>
           </span>
         </label>
         <label className="flex items-start gap-2 text-sm">
-          <input type="radio" name="storage-backend" className="mt-1 accent-(--accent)" checked={backend === 's3'} onChange={() => setBackend('s3')} />
+          <input type="radio" name="storage-backend" className="mt-1 accent-(--accent)" checked={backend === 's3'} onChange={() => pick('s3')} />
           <span>
             S3-compatible storage
             <span className="block text-xs text-ink-3">Amazon S3, Cloudflare R2, Backblaze B2, MinIO and others.</span>

@@ -119,7 +119,7 @@ export function ArchiveTools() {
         >
           Remove from sources
         </button>
-        <span className="text-sm text-ink-2" role="status">
+        <span className="text-sm text-ink-2" role="status" hidden={!caps.removals}>
           {connected ? `Extension connected (version ${ping.data?.version ?? '?'})` : `Extension not connected${getExtensionId() ? '' : ': set its id in Settings'}`}
           {waiting != null && ` · ${waiting} waiting`}
         </span>

@@ -32,7 +32,7 @@ from kosha.config import (
     get_settings,
 )
 from kosha.db import get_session
-from kosha.models import ApiToken, AuthLink, User
+from kosha.models import ApiToken, AuthLink, DemoQueryVector, User
 from kosha.prefs import ADMIN, load_instance
 
 _hasher = PasswordHasher()
@@ -270,7 +270,9 @@ def public_config(session: Session = Depends(get_session)) -> dict:
     """What the web app needs before sign-in: whether to show the setup
     screen, the sign-up form, the landing page, or the demo's credentials."""
     env, instance = get_settings(), load_instance(session)
-    demo = {"email": env.kosha_demo_email, "password": env.kosha_demo_password, "notice": DEMO_NOTICE} if env.kosha_demo else None
+    # `searches`: the suggested searches, the only text a demo can rank by meaning (their vectors came with the bundle).
+    demo = {"email": env.kosha_demo_email, "password": env.kosha_demo_password, "notice": DEMO_NOTICE,
+            "searches": sorted(set(session.scalars(select(DemoQueryVector.query))))} if env.kosha_demo else None
     return {"app_name": APP_NAME, "version": APP_VERSION, "has_users": _has_users(session),
             "signups": "closed" if demo else instance["signups"], "landing": bool(instance["landing"]),
             "demo": demo, "demo_url": env.kosha_demo_url or None, "links": {"github": GITHUB_URL, "docs": DOCS_URL}}

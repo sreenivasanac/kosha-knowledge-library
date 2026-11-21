@@ -5,10 +5,10 @@ import { Archive, ArchiveRestore, BookmarkPlus, Captions, ChevronLeft, ChevronRi
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { runAction, setArchived } from './actions';
 import { ArchiveTools, deleteForever } from './ArchiveTools';
-import { api, ApiError, fetchItems, useCapabilities, useIsDemo, useWhyUnavailable, type Item, type Suggest } from './api';
+import { api, ApiError, fetchItems, publicConfigQuery, useCapabilities, useIsDemo, useWhyUnavailable, type Item, type Suggest } from './api';
 import { DEMO_UNAVAILABLE, PAGE_SIZES, SORTS, STORAGE_KEYS, type View } from './constants';
 import { ItemCard } from './ItemCard';
-import { setSearch, withDefaults, type LibrarySearch } from './nav';
+import { goQuery, setSearch, withDefaults, type LibrarySearch } from './nav';
 import { hasToken, quoteValue, toggleToken } from './query';
 import { FilterChips, SearchBar } from './SearchBar';
 import { getState, openOverlay, setState, useStore } from './store';
@@ -16,9 +16,28 @@ import { ErrorNote, useHint } from './ui';
 
 /** The server's notice codes in words; anything else it sends is shown as it is. */
 const NOTICE_TEXT: Record<string, string> = {
-  demo_keyword_only: 'The demo searches by keyword only. Search by meaning needs your own server and an embeddings key.',
+  demo_keyword_only: 'These are keyword results. The demo ranks by meaning only for its example searches; any other search by meaning needs your own server and an embeddings key.',
   semantic_unavailable: 'Search by meaning is not available right now, so these are keyword results.',
 };
+
+/** How many of the demo's example searches the notice offers. */
+const DEMO_SEARCHES_SHOWN = 6;
+
+/** The demo's example searches as links: the only text it can rank by meaning. Nothing on a server that does not list them. */
+function DemoSearches() {
+  const searches = useQuery(publicConfigQuery).data?.demo?.searches?.slice(0, DEMO_SEARCHES_SHOWN) ?? [];
+  if (!searches.length) return null;
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+      Try:
+      {searches.map((q) => (
+        <button key={q} className="text-accent hover:underline" onClick={() => goQuery(q)}>
+          {q}
+        </button>
+      ))}
+    </span>
+  );
+}
 
 /** The reading column; notices and empty states share it so they line up with the list. */
 export const COLUMN = 'mx-auto max-w-[680px]';
@@ -361,6 +380,7 @@ export function Library({ archived = false }: { archived?: boolean }) {
         {fresh && data.notice && (
           <p role="status" className={`${COLUMN} mb-3 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-2`}>
             {NOTICE_TEXT[data.notice] ?? data.notice}
+            {data.notice === 'demo_keyword_only' && <DemoSearches />}
           </p>
         )}
         {query.isPending ? (

@@ -243,7 +243,7 @@ async function fetchCapabilities(): Promise<Capabilities> {
 }
 export const capabilitiesQuery = { queryKey: ['capabilities'], queryFn: fetchCapabilities, staleTime: 60_000 };
 /** The demo server refuses these, so the app shows their controls as unavailable. */
-const inDemo = (caps: Capabilities, demo: boolean): Capabilities => (demo ? { ...caps, ask: false, askStream: false, jev: false, mediaText: false, tokens: false, import: false } : caps);
+const inDemo = (caps: Capabilities, demo: boolean): Capabilities => (demo ? { ...caps, ask: false, askStream: false, jev: false, mediaText: false, tokens: false, import: false, removals: false } : caps);
 export const useCapabilities = (): Capabilities => inDemo(useQuery(capabilitiesQuery).data ?? NO_CAPABILITIES, useIsDemo());
 export const getCapabilities = (): Capabilities => inDemo(queryClient.getQueryData<Capabilities>(['capabilities']) ?? NO_CAPABILITIES, !!queryClient.getQueryData<Me | null>(['me'])?.demo);
 
@@ -383,7 +383,8 @@ export interface PublicConfig {
   has_users: boolean;
   signups: 'open' | 'invite' | 'closed';
   landing: boolean;
-  demo: { email: string; password: string; notice: string } | null;
+  /** `searches`: the example searches a demo can rank by meaning; absent on an older server. */
+  demo: { email: string; password: string; notice: string; searches?: string[] } | null;
   demo_url: string | null;
   links: { github?: string; docs?: string };
 }

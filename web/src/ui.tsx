@@ -165,7 +165,7 @@ export function useAction() {
       setBusy(false);
     }
   }
-  return { run, busy, error };
+  return { run, busy, error, clear: () => setError(null) };
 }
 
 export const copyText = (text: string, what: string) => navigator.clipboard.writeText(text).then(() => toast(`Copied ${what}`), () => toast('The browser blocked copying', { error: true }));
