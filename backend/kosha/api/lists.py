@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from kosha.auth import current_user
 from kosha.db import get_session
 from kosha.models import Item, List, ListItem, User
-from kosha.schemas import ListDetailOut, ListIn, ListItemsIn, ListOut
+from kosha.schemas import ListDetailOut, ListIn, ListItemsIn, ListOut, ListPatch
 from kosha.serialize import serialize_items
 
 router = APIRouter(tags=["lists"])
@@ -43,6 +43,25 @@ def one_list(list_id: int, user: User = Depends(current_user), session: Session 
     items = session.scalars(select(Item).join(ListItem, ListItem.item_id == Item.id).where(ListItem.list_id == row.id)
                             .order_by(ListItem.position.asc().nulls_last(), ListItem.added_at, Item.id)).all()
     return {**_out(session, row), "items": serialize_items(session, user.id, list(items))}
+
+
+@router.patch("/lists/{list_id}", response_model=ListOut)
+def update_list(list_id: int, body: ListPatch, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Rename a list or change its description; fields left out stay as they are."""
+    row = _list(session, user, list_id)
+    for name in body.model_fields_set:
+        if name == "name" and body.name is None:
+            continue  # a list always has a name
+        setattr(row, name, getattr(body, name))
+    session.commit()
+    return _out(session, row)
+
+
+@router.delete("/lists/{list_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_list(list_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Delete the list. Its items stay in the library."""
+    session.delete(_list(session, user, list_id))
+    session.commit()
 
 
 @router.post("/lists/{list_id}/items", response_model=ListOut)

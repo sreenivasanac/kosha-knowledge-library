@@ -359,7 +359,8 @@ def test_lists(client, library):
 
 def test_summaries(session, user, library):
     counts = summarize(session, user.id)
-    assert counts["rule"] == 1 and counts["no_text"] == 0
+    assert counts["rule"] == 2 and counts["no_text"] == 0  # the long post, and the video with a transcript
+    assert session.get(Item, library["video"]).summary.endswith("Transcript: we cache the prompt prefix")
     short, long_post = session.get(Item, library["repo"]), session.get(Item, library["long"])
     assert (short.summary, short.summary_method, short.summary_status) == ("A Postgres job queue", METHOD_OWN_TEXT, "done")
     assert long_post.summary_method == METHOD_RULE

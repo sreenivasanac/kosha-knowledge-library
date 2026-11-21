@@ -49,7 +49,7 @@ MEDIA_TIMEOUT_S = 60
 # Downloads go only to these hosts (or their subdomains), over https, and a
 # redirect is followed only to another of them.
 MEDIA_ALLOWED_HOSTS = ("pbs.twimg.com", "video.twimg.com", "abs.twimg.com", "media.licdn.com",
-                       "static.licdn.com", "i.ytimg.com")
+                       "static.licdn.com", "dms.licdn.com", "i.ytimg.com")
 MEDIA_MAX_REDIRECTS = 5
 MEDIA_MAX_BYTES_IMAGE = 25 * 1024 * 1024
 MEDIA_MAX_BYTES_VIDEO = 500 * 1024 * 1024
@@ -73,6 +73,13 @@ DEFAULT_SETTINGS: dict = {
     # and the most all Jev calls may spend in a calendar month.
     "jev_run_budget_usd": 0.50,
     "jev_monthly_budget_usd": 5.0,
+    # LLM layer (kosha/llm.py). Model ids are LiteLLM names ("provider/model").
+    # Chosen from OpenAI's line-up and price list as of 21 Nov 2026; the Ask
+    # default follows docs/experiments/ask_eval_2026-11-21.md.
+    "llm_small_model": "openai/gpt-6-luna",  # summaries, image descriptions ($0.10 / $0.50 per 1M tokens)
+    "llm_ask_model": "openai/gpt-6.1-terra",  # Ask ($1 / $5 per 1M tokens)
+    "stt_model": "openai/gpt-transcribe",  # speech to text ($0.0045 a minute)
+    "llm_monthly_cap_usd": 5.0,  # all LLM and speech-to-text calls in a calendar month
 }
 
 
@@ -97,6 +104,8 @@ class Settings(BaseSettings):
     voyage_api_key: str = ""
     # TypeSafe Jev (the `jev` and `score_labels` pipeline stages).
     typesafe_api_key: str = ""
+    # OpenAI (Ask, LLM summaries, media text). Other LiteLLM providers read their own environment variables.
+    openai_api_key: str = ""
 
 
 @lru_cache

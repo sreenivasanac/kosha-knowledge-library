@@ -97,6 +97,9 @@ def serialize_items(session: Session, user_id: int, items: list[Item], nest_quot
                 "author_handle": target.author_handle if target else None}
 
     out = []
+    # LinkedIn only: the author's headline, kept in the raw page capture (`raw` itself is not loaded).
+    headlines = dict(session.execute(select(Item.id, Item.raw["page"]["author_headline"].as_string()).where(
+        Item.id.in_([i.id for i in items if i.source == "linkedin"]))).all())
     for i in items:
         rels = {r.relation: r for r in relations.get(i.id, [])}
         quote = rels.get("quotes")
@@ -104,7 +107,8 @@ def serialize_items(session: Session, user_id: int, items: list[Item], nest_quot
         out.append({
             "id": i.id, "seq": i.seq, "source": i.source, "source_id": i.source_id, "is_saved": i.is_saved,
             "url": i.url, "title": i.title, "body": i.body, "summary": i.summary,
-            "author": {"name": i.author_name, "handle": i.author_handle, "avatar": i.author_avatar},
+            "author": {"name": i.author_name, "handle": i.author_handle, "avatar": i.author_avatar,
+                       "headline": headlines.get(i.id)},
             "posted_at": i.posted_at,
             "saved_at": i.saved_at or i.saved_at_est,
             "saved_at_approximate": i.saved_at is None and i.saved_at_est is not None,

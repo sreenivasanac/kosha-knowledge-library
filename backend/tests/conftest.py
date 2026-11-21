@@ -1,4 +1,5 @@
-"""Tests run against the `kosha_test` database only. The environment is
+"""Tests run against a `kosha_test*` database only (`kosha_test`, or a private
+copy such as `kosha_test_be4` when several runs share the server). The environment is
 pointed at it before any Kosha module that opens a connection is imported."""
 import os
 import tempfile
@@ -6,7 +7,7 @@ import tempfile
 from kosha.config import Settings, get_settings
 
 _test_url = Settings().test_database_url
-assert _test_url.rsplit("/", 1)[-1].split("?")[0] == "kosha_test", "TEST_DATABASE_URL must point at kosha_test"
+assert _test_url.rsplit("/", 1)[-1].split("?")[0].startswith("kosha_test"), "TEST_DATABASE_URL must point at a kosha_test database"
 os.environ.update({
     "DATABASE_URL": _test_url,
     "KOSHA_MEDIA_DIR": tempfile.mkdtemp(prefix="kosha-test-media-"),

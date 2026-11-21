@@ -27,6 +27,7 @@ class AuthorOut(BaseModel):
     name: str | None
     handle: str | None
     avatar: str | None
+    headline: str | None = None  # LinkedIn: the line under the author's name
 
 
 class MediaOut(BaseModel):
@@ -287,6 +288,11 @@ class SavedViewOut(SavedViewIn):
 
 class ListIn(BaseModel):
     name: str = Field(min_length=1)
+    description: str | None = None
+
+
+class ListPatch(BaseModel):
+    name: str | None = Field(None, min_length=1)
     description: str | None = None
 
 

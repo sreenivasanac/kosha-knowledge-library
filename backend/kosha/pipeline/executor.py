@@ -15,6 +15,7 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import numpy as np
 from constella import Label, Question, assign, group, shortlist, tree_hints
@@ -26,7 +27,7 @@ from sqlalchemy.orm import Session
 from kosha import jev
 from kosha.config import DEFAULT_NAMESPACE
 from kosha.items_query import STABLE_ORDER
-from kosha.models import Item, ItemEmbedding, LabelRun, ResultSet, SavedView
+from kosha.models import Item, ItemEmbedding, LabelRun, ResultSet, SavedView, SpendLedger
 from kosha.pipeline import writes
 from kosha.pipeline.parser import Stage, Tok, number, split
 from kosha.search import engine
@@ -463,7 +464,21 @@ def _ask(ctx: Ctx, stage: Stage, pairs: list, operation: str) -> list | None:
     try:
         jev.check_budget(ctx.session, ctx.user_id, est.usd, ctx.run)
         answers, spend = jev.ask(ctx.session, ctx.user_id, pairs, operation, ctx.run)
-    except (jev.BudgetError, jev.cj.JevError) as exc:
+    except jev.cj.JevError as exc:
+        # Requests that got through before the failure were billed and their
+        # answers are cached; without this row that money is in no ledger.
+        paid = exc.partial[1] if exc.partial else None
+        if paid is not None and paid.usd:
+            ctx.session.add(SpendLedger(
+                user_id=ctx.user_id, provider=jev.PROVIDER, operation=f"{operation}_failed", units=paid.input_tokens,
+                amount_usd=Decimal(f"{paid.usd:.6f}"),
+                meta={"unit": "tokens", "requests": paid.requests, "asked": paid.asked, "uncached_usd": round(paid.usd, 6),
+                      **({"run_id": ctx.run.id} if ctx.run else {})}))
+            ctx.session.commit()
+            raise QueryError(f"{stage.name}: {exc} (${paid.usd:.4f} was spent on {paid.asked} answers that are now cached; "
+                             "send the same call again to ask only the rest)", stage.pos) from None
+        raise QueryError(f"{stage.name}: {exc}", stage.pos) from None
+    except jev.BudgetError as exc:
         raise QueryError(f"{stage.name}: {exc}", stage.pos) from None
     ctx.usd += spend.usd
     return answers, f"est=${est.usd:.4f} asked={spend.asked} cached={spend.cached}"
@@ -529,8 +544,11 @@ def s_score_labels(ctx: Ctx, stage: Stage):
         root = writes.find_tag(ctx.session, ctx.user_id, ctx.namespace, subtree.text)
         if root is None:
             raise QueryError(f"No tag at {subtree.text} in namespace {ctx.namespace}", subtree.pos)
+    # A parent without a definition is a container for its children, not a label
+    # to ask about: its bare name ("AI") would pass for most of the library.
+    containers = {tag.parent_id for tag, _ in paths.values() if tag.parent_id is not None}
     labels = [Label(str(tag.id), path, tag.description or tag.name) for tag, path in paths.values()
-              if tag.status in ("approved", "proposed")
+              if tag.status in ("approved", "proposed") and (tag.description or tag.id not in containers)
               and (root is None or str(tag.path) == str(root.path) or str(tag.path).startswith(f"{root.path}."))]
     if not labels:
         raise QueryError(f"No approved or proposed tags to score against in namespace {ctx.namespace}", stage.pos)

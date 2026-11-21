@@ -22,7 +22,9 @@ from kosha.summaries import RULE_METHODS
 VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
 DOC_MODEL = "voyage-4-large"
 QUERY_MODEL = "voyage-4-lite"
-PRICE_PER_M_TOKENS_USD = {"voyage-4-large": 0.12, "voyage-4": 0.06, "voyage-4-lite": 0.02}
+PRICE_PER_M_TOKENS_USD = {"voyage-4-large": 0.12, "voyage-4": 0.06, "voyage-4-lite": 0.02,
+                          # rerankers (kosha.search.rerank): tokens = query tokens x documents + document tokens
+                          "rerank-3": 0.05, "rerank-3-lite": 0.02}  # https://docs.voyageai.com/docs/pricing.md
 BODY_MAX_CHARS = 6000
 # voyage-4-large takes 1,000 texts and 120K tokens a request. Budgeted in
 # characters (about 3 per token at worst) to stay well inside the token limit.

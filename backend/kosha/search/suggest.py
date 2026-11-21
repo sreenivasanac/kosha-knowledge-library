@@ -14,14 +14,14 @@ from sqlalchemy.orm import Session
 from kosha.config import DEFAULT_NAMESPACE
 from kosha.models import Collection, Item, ItemCollection, ItemLink, List, ResultSet, SavedView, Tag
 from kosha.search.engine import SNAPSHOT_PREFIX, recent_searches
-from kosha.search.query import KEYS, QueryError, compile_filter, parse
+from kosha.search.query import DATE_WORDS, KEYS, QueryError, compile_filter, parse
 
 # --- Tunables ---------------------------------------------------------------
 MAX_SUGGESTIONS = 10
 MAX_HINT_ROWS = 3  # tag and author hints under a bare word
 # Offered for keys that take a number or a date; each is shown with its count.
 PRESETS = {
-    "date": ("7d", "30d", "90d", "{year}", "{last_year}"),
+    "date": ("today", "7d", "30d", "90d", "thismonth", "lastmonth", "{year}", "{last_year}"),
     "duration": ("<1m", "1m..5m", "5m..20m", ">20m"),
     "likes": (">100", ">1000", ">10000"), "views": (">10000", ">100000", ">1000000"),
     "reposts": (">100", ">1000"), "replies": (">50", ">500"),
@@ -29,6 +29,7 @@ PRESETS = {
     "tags": ("0", "1", ">1"), "recent": ("100", "500"),
 }
 COUNTED_ENUMS = ("is", "has", "type", "tagged-by", "tag-status")
+UNCOUNTED_VALUES = ("has:code",)  # a regex over every text (about 40 ms): offered without a count
 
 
 def _quote(value: str) -> str:
@@ -135,12 +136,14 @@ def _values(ctx: _Context, key: str, typed: str) -> list[dict]:
     if key == "similar":
         return [_row("", "Paste an item id, or use Find similar on a card", "hint")]
     if spec.values:  # fixed values; the countable ones show how many each would give
-        return [_row(v, v, "value", ctx.count(f"{key}:{v}") if key in COUNTED_ENUMS else None)
+        return [_row(v, v, "value", ctx.count(f"{key}:{v}") if key in COUNTED_ENUMS and f"{key}:{v}" not in UNCOUNTED_VALUES else None)
                 for v in spec.values if v.startswith(typed.lower())]
     year = datetime.now(UTC).year
     presets = PRESETS.get("date" if spec.type == "date" else key, ())
     values = [p.format(year=year, last_year=year - 1) for p in presets]
-    return [_row(v, v, "value", ctx.count(f"{key}:{v}")) for v in values if v.startswith(typed)]
+    if spec.type == "date" and typed:  # a word being typed: offer the rest of the date words too
+        values += [w for w in DATE_WORDS if w not in values]
+    return [_row(v, v, "value", ctx.count(f"{key}:{v}")) for v in values if v.startswith(typed.lower())]
 
 
 def suggest(session: Session, user_id: int, q: str, cursor: int | None = None) -> dict:

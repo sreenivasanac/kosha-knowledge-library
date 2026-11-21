@@ -27,7 +27,7 @@ Read from the repo-root `.env` (never committed, never logged).
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | `postgresql+psycopg://user@host:port/kosha` |
-| `TEST_DATABASE_URL` | Same, for `kosha_test`. The tests refuse any other database name. |
+| `TEST_DATABASE_URL` | Same, for `kosha_test`. The tests refuse a database whose name does not start with `kosha_test`. |
 | `KOSHA_SECRET_KEY` | Signs the session cookie |
 | `KOSHA_ADMIN_EMAIL`, `KOSHA_ADMIN_PASSWORD` | The single account, created by `kosha create-admin` |
 | `KOSHA_API_TOKEN` | Bearer token for the extension and MCP, registered by `kosha create-admin` |
@@ -37,6 +37,7 @@ Read from the repo-root `.env` (never committed, never logged).
 | `KOSHA_X_ACCESS_TOKEN`, `KOSHA_X_USER_ID` | Optional, for the official X API sync |
 | `VOYAGE_API_KEY` | Embeddings for semantic search. Without it search is keyword-only. |
 | `TYPESAFE_API_KEY` | TypeSafe Jev, for the `jev` and `score_labels` pipeline stages and `POST /api/jev/check` |
+| `OPENAI_API_KEY` | Ask, image descriptions and transcripts (`kosha/llm.py`, through LiteLLM). Without it those routes answer 503. |
 
 Ports, page sizes, CORS origins, the app name and the defaults of user settings are constants in
 `kosha/config.py`.
@@ -68,7 +69,7 @@ thread (`kosha/sync/scheduler.py`); it calls X only when the setting is on.
 | `kosha/parsers/` | X GraphQL (`x_graphql.py`), official X API (`x_api.py`), LinkedIn. All return one shape (`common.py`). |
 | `kosha/ingest.py` | Store the envelope, parse, merge ("richer payload wins field by field") |
 | `kosha/items_query.py` | The basic list filters as SQL conditions, the stable order, and paging |
-| `kosha/api/` | REST routes: captures, items, tags, sidebar/stats/settings, search, lists, removals |
+| `kosha/api/` | REST routes: captures, items, tags, sidebar/stats/settings, search, lists, removals, pipeline, Ask and media text (`ai.py`), tokens/spend/sync (`account.py`) |
 | `kosha/auth.py` | Session-cookie login and bearer tokens |
 | `kosha/media.py` | Media download and `GET /media/{id}` |
 | `kosha/sync/` | Official X API bookmark sync (`x_api.py`) and its daily in-process scheduler |
@@ -77,7 +78,10 @@ thread (`kosha/sync/scheduler.py`); it calls X only when the setting is on.
 | `kosha/search/embeddings.py` | Voyage client, item embedding job, query-vector cache |
 | `kosha/search/index.py` | Maintains the text-search columns |
 | `kosha/search/suggest.py` | Autocomplete |
-| `kosha/summaries.py` | Rule-built summaries, and the empty slot for an LLM recipe |
+| `kosha/summaries.py` | Rule-built summaries (the default, from `docs/experiments/summaries_2026-11-21.md`) and the batched LLM recipe it was compared with |
+| `kosha/llm.py` | Every LLM and speech-to-text call: LiteLLM, the monthly cap, the `spend_ledger` row |
+| `kosha/ask.py` | Ask: the tool-use loop over read-only pipelines, its system prompt and limits |
+| `kosha/media_text.py` | Transcripts and image descriptions: estimate, queue, worker, refresh of summary and search columns |
 | `kosha/pipeline/` | The pipeline `query` engine: `parser.py` (stages, positions), `executor.py` (every stage, the response cap, the grammar text), `writes.py` (preview and confirm tokens, tag/role/state/list writes, undo snapshots) |
 | `kosha/jev.py` | Jev through `constella.jev`: the text an item's question reads, the answer cache, estimates, budgets, ledger rows |
 | `kosha/runs.py` | Label runs: a trial tag namespace per experiment, coverage and spend, compare, promote |
@@ -109,7 +113,7 @@ is in `../docs/experiments/search_eval_2026-11-21.md`.
 | `POST /api/search/parse` `{q}` | `{ok, canonical, chips, has_text, error}`; always 200 |
 | `GET /api/search/recent` | The last 10 searches |
 | `GET/POST /api/saved-views`, `PATCH/DELETE /api/saved-views/{id}` | Saved views `{name, query, params}`; the query is checked and stored in canonical form |
-| `GET/POST /api/lists`, `GET /api/lists/{id}` | Lists; the detail has the items in list order |
+| `GET/POST /api/lists`, `GET/PATCH/DELETE /api/lists/{id}` | Lists; the detail has the items in list order. `PATCH` takes `name` and/or `description`; `DELETE` removes the list, not its items |
 | `POST/DELETE /api/lists/{id}/items` `{item_ids}`, `PUT /api/lists/{id}/order` `{item_ids}` | Add, remove, reorder |
 | `GET /api/removals/pending`, `POST /api/removals/result` | Archived items to remove at the source, and the outcome (`removed` and `already_gone` hard-delete the item) |
 
@@ -146,6 +150,26 @@ real library are in `../docs/experiments/pipeline_smoke_2026-11-21.md`.
   only, so a run never shows up there until it is promoted.
 - Constella (`constella @ git+https://github.com/sreenivasanac/constella@library-v2`) supplies the Jev client,
   `group`, `shortlist`, `assign` and `tree_hints`.
+
+## Ask, media text and account
+
+Measured on the real library: `../docs/experiments/ask_eval_2026-11-21.md`, `summaries_2026-11-21.md`, `media_text_2026-11-21.md`.
+
+| Route | What it does |
+|---|---|
+| `POST /api/ask` `{question, max_steps?}` | An LLM answers from the library through read-only pipelines. `{answer, items, steps: [{pipeline, n, note}], spent: {llm_usd, jev_usd}, took_ms, model, tokens}`. The answer cites items as `[id]`; `items` are those ids in the order cited. |
+| `POST /api/ask/stream` | The same as server-sent events: `step` per pipeline, then `done` (the full answer) or `error`. |
+| `POST /api/media-text/estimate` `{item_ids?, all?}` | `{n_media, minutes, images, estimate_usd}` for the media of those items that has no text yet. |
+| `POST /api/media-text/start` `{item_ids?, all?}` | 202: queues them and starts the worker thread. One item id is what the `m` key sends. 402 when the estimate would pass the LLM cap. |
+| `GET /api/media-text/status` | `{counts: {none, queued, done, failed}, running, job, ffmpeg}`; `job.errors` gives the reason of each failure by media id. |
+| `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` | API tokens: name, created, last used. The secret is in the `POST` answer only (`token`). |
+| `GET /api/spend` | This month: `{month, total_usd, providers: [{provider, usd, calls}], caps: [{name, setting, cap_usd, spent_usd}]}` for `x`, `jev` and `llm`. |
+| `POST /api/sync` `{source: "x_api"}`, `GET /api/sync` | Start the official X API sync in the background (`disabled` when the setting is off; nothing is called); the last run of each sync from `sync_state`. |
+
+- Models are user settings, as LiteLLM names: `llm_ask_model` (default `openai/gpt-6.1-terra`), `llm_small_model` (`openai/gpt-6-luna`, image descriptions), `stt_model` (`openai/gpt-transcribe`). `llm_monthly_cap_usd` (default $5) stops every LLM and speech-to-text call for the month.
+- Ask: at most 6 tool calls, each result cut to about 1,200 tokens, 40,000 input tokens over the loop, $0.02 of Jev a question. Write stages are refused on the server. Bookmark text reaches the model inside `<library_data>` tags, which the system prompt declares untrusted.
+- Media text: a video's smallest mp4 is downloaded to a temporary folder (https, `MEDIA_ALLOWED_HOSTS`, 200 MB cap), ffmpeg cuts the sound track into mp3 pieces, each is transcribed. Without ffmpeg the mp4 is sent as it is when it is under 25 MB, otherwise the file fails with that reason. A video with no speech gets a description of its preview frame. Then the item's summary, content hash and search columns are refreshed.
+- LinkedIn saved-posts captures: the parser reads the headline, line breaks, picture kind (photo, video cover, document cover, link preview, company logo) and link preview from the card, takes the post time from the activity id (the relative label is the fallback), and estimates the save time as a lower bound (`parse_saved_posts` in `kosha/parsers/linkedin.py`).
 
 ## Captures
 

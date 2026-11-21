@@ -37,6 +37,17 @@ from kosha.models import (
 LONG_BODY_CHARS = 1000  # `is:long`
 THIN_TEXT_CHARS = 40  # `is:thin`: less text than this and no media extract
 TS_CONFIGS = ("english", "simple")  # a query term is tried stemmed and as written
+# `has:code`: a link to one of these hosts, or text that shows code or an install command.
+CODE_DOMAINS = ("github.com", "gist.github.com", "gitlab.com", "git.new", "colab.research.google.com", "kaggle.com", "replit.com")
+CODE_TEXT_REGEX = "```|(pip|npm|pnpm|brew|cargo) install|npx |uvx |git clone|docker run"
+# `domain:` also matches the same site's other host names.
+DOMAIN_ALIASES = {"youtube.com": ("youtu.be",), "x.com": ("twitter.com",), "twitter.com": ("x.com",), "github.com": ("git.new",)}
+# `from:name` with no exact handle or name falls back to authors containing
+# the text, then to the closest by trigram similarity (a misspelling).
+FROM_SIMILARITY = 0.45
+FROM_MAX_AUTHORS = 20
+# Words a date qualifier takes besides dates and `30d`: `saved:today`, `posted:lastmonth`.
+DATE_WORDS = ("today", "yesterday", "thisweek", "lastweek", "thismonth", "lastmonth", "thisyear", "lastyear")
 
 # `in:` field -> (tsvector column, weight label); see kosha.search.index.
 FIELDS = {
@@ -59,7 +70,7 @@ class Key:
 
 
 KEYS: dict[str, Key] = {
-    "from": Key("str", "author", "from:@simonw"),
+    "from": Key("str", "author: @handle is exact; a name also matches part of a name or a near spelling", "from:@simonw"),
     "quotes": Key("str", "quotes a post by this author, or this item id", "quotes:@karpathy"),
     "replies-to": Key("str", "replies to this author", "replies-to:@karpathy"),
     "thread": Key("int", "every held post of this item's thread", "thread:1234"),
@@ -70,7 +81,7 @@ KEYS: dict[str, Key] = {
     "type": Key("enum", "content type", "type:video", CONTENT_TYPES),
     "has": Key("enum", "a part is present", "has:link",
                ("image", "video", "audio", "article", "document", "link", "quote", "note", "summary",
-                "transcript", "image-text", "media")),
+                "transcript", "image-text", "media", "code")),
     "lang": Key("str", "language code", "lang:en"),
     "len": Key("int", "characters of body", "len:>1000"),
     "duration": Key("duration", "longest video or audio", "duration:<5m"),
@@ -272,9 +283,27 @@ def _duration(value: str, pos: int) -> int:
     return int(float(match.group(1)) * DURATION_UNITS[match.group(2) or "s"])
 
 
+def _word_period(word: str, now: datetime) -> tuple[datetime, datetime]:
+    """The [start, end) span of a DATE_WORDS value, in UTC. Weeks start on Monday."""
+    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month = day.replace(day=1)
+    last_month = (month - timedelta(days=1)).replace(day=1)
+    week = day - timedelta(days=day.weekday())
+    return {
+        "today": (day, day + timedelta(days=1)), "yesterday": (day - timedelta(days=1), day),
+        "thisweek": (week, week + timedelta(days=7)), "lastweek": (week - timedelta(days=7), week),
+        "thismonth": (month, (month + timedelta(days=32)).replace(day=1)), "lastmonth": (last_month, month),
+        "thisyear": (day.replace(month=1, day=1), day.replace(year=day.year + 1, month=1, day=1)),
+        "lastyear": (day.replace(year=day.year - 1, month=1, day=1), day.replace(month=1, day=1)),
+    }[word]
+
+
 def _period(value: str, pos: int, now: datetime) -> tuple[datetime, datetime]:
     """A date bound as the [start, end) span it covers: a day, month or year,
-    or the single instant "N units ago" for a relative value such as 30d."""
+    a word such as `lastmonth`, or the single instant "N units ago" for a
+    relative value such as 30d."""
+    if value.lower() in DATE_WORDS:
+        return _word_period(value.lower(), now)
     match = re.fullmatch(r"(\d+)([hdwy])", value)
     if match:
         instant = now - timedelta(seconds=int(match.group(1)) * RELATIVE_UNITS[match.group(2)])
@@ -293,7 +322,7 @@ def _period(value: str, pos: int, now: datetime) -> tuple[datetime, datetime]:
             end = datetime(year + 1, 1, 1, tzinfo=UTC)
         return start, end
     except ValueError:
-        raise QueryError(f'"{value}" is not a date; use 2026-03-14, 2026-03, 2026 or 30d', pos) from None
+        raise QueryError(f'"{value}" is not a date; use 2026-03-14, 2026-03, 2026, 30d or one of: {", ".join(DATE_WORDS)}', pos) from None
 
 
 def _date_pred(key: str, value: str, raw: str, pos: int, now: datetime) -> Pred:
@@ -614,8 +643,11 @@ def ts_config(config: str):
     return literal_column(f"'{config}'")
 
 
-def text_condition(node: Text) -> ColumnElement[bool]:
-    """One text atom as a condition on the search columns."""
+def text_condition(node: Text, stop_words_pass: bool = True) -> ColumnElement[bool]:
+    """One text atom as a condition on the search columns. A term made only
+    of stop words has nothing to match and lets every row pass; with
+    `stop_words_pass` off it matches by the word index alone (what the keyword
+    ranker counts with, so the count stays an index lookup)."""
     if node.kind == "fuzzy":  # pg_trgm word similarity, default threshold 0.6
         return literal(node.value).op("<%")(Item.search_text)
     if node.kind == "regex":
@@ -634,6 +666,8 @@ def text_condition(node: Text) -> ColumnElement[bool]:
     else:
         make, arg = (func.phraseto_tsquery if node.kind == "phrase" else func.plainto_tsquery), node.value
     matches = [vector.op("@@")(make(ts_config(config), arg)) for config in TS_CONFIGS for vector in vectors]
+    if not stop_words_pass:
+        return or_(*matches)
     # A term made only of stop words ("the") has nothing to match; let it pass.
     return or_(func.numnode(make(ts_config("english"), arg)) == 0, *matches)
 
@@ -664,6 +698,12 @@ def _tag_count(namespace: str):
     return (select(func.count()).select_from(ItemTag)
             .where(ItemTag.item_id == Item.id, ~ItemTag.removed_by_user, ItemTag.namespace == namespace)
             .correlate(Item).scalar_subquery())
+
+
+def _no_tags(namespace: str) -> ColumnElement[bool]:
+    """`is:untagged` and `tags:0` as NOT EXISTS: Postgres runs it as one
+    anti-join, where comparing `_tag_count` with 0 counts tags row by row."""
+    return ~exists().where(ItemTag.item_id == Item.id, ~ItemTag.removed_by_user, ItemTag.namespace == namespace)
 
 
 PLAIN_COLUMNS = {"likes": Item.likes, "reposts": Item.reposts, "replies": Item.replies, "views": Item.views,
@@ -754,15 +794,15 @@ class _Compiler:
         if key in PLAIN_COLUMNS:
             return _compare(PLAIN_COLUMNS[key], p.op, v)
         if key == "tags":
+            if (p.op, v) == ("eq", 0):
+                return _no_tags(self.namespace)
             return _compare(_tag_count(self.namespace), p.op, v)
         if key in DATE_COLUMNS:
             lo, hi = v
             column = DATE_COLUMNS[key]
             return and_(column >= lo if lo is not None else true(), column < hi if hi is not None else true())
         if key == "from":
-            if v.startswith("@") or re.fullmatch(r"\w+", v):
-                return func.lower(Item.author_handle) == v.lstrip("@").lower()
-            return func.lower(Item.author_name) == v.lower()
+            return func.lower(Item.author_handle).in_(self.authors(v))
         if key in ("quotes", "replies-to"):
             kind = "quotes" if key == "quotes" else "replies_to"
             if v.isdigit():
@@ -795,7 +835,8 @@ class _Compiler:
         if key == "domain":
             domain = v.lower().removeprefix("www.")
             return exists().where(ItemLink.item_id == Item.id,
-                                  or_(ItemLink.domain == domain, ItemLink.domain.endswith("." + domain, autoescape=True)))
+                                  or_(ItemLink.domain.in_((domain, *DOMAIN_ALIASES.get(domain, ()))),
+                                      ItemLink.domain.endswith("." + domain, autoescape=True)))
         if key == "link":
             return exists().where(ItemLink.item_id == Item.id,
                                   or_(ItemLink.url.icontains(v, autoescape=True), ItemLink.title.icontains(v, autoescape=True)))
@@ -807,6 +848,24 @@ class _Compiler:
         if key == "is":
             return self.state(v)
         raise QueryError(f"{key}: cannot be used here", p.pos)
+
+    def authors(self, value: str) -> list[str]:
+        """The lower-case handles `from:value` means. `@handle` is exact.
+        Without the @: the author with that handle; if there is none, the
+        authors whose handle or name contains it (most saved first); if still
+        none, the closest by spelling. An unknown author matches nothing."""
+        v = value.lstrip("@").lower()
+        handle, name = func.lower(Item.author_handle), func.lower(func.coalesce(Item.author_name, ""))
+        held = (select(handle).where(Item.user_id == self.user_id, Item.author_handle.is_not(None))
+                .group_by(handle).order_by(func.count().desc()).limit(FROM_MAX_AUTHORS))
+        if value.startswith("@") or self.session.scalar(held.where(handle == v)):
+            return [v]
+        for match in (or_(handle.contains(v, autoescape=True), name.contains(v, autoescape=True)),
+                      or_(func.similarity(handle, v) >= FROM_SIMILARITY, func.word_similarity(v, name) >= FROM_SIMILARITY)):
+            found = list(self.session.scalars(held.where(match)))
+            if found:
+                return found
+        return [v]
 
     def has(self, v: str) -> ColumnElement[bool]:
         media = lambda *where: exists().where(ItemMedia.item_id == Item.id, *where)  # noqa: E731
@@ -821,6 +880,8 @@ class _Compiler:
             "image-text": lambda: media(or_(ItemMedia.alt_text.is_not(None), and_(
                 ItemMedia.extract_text.is_not(None), ItemMedia.extract_kind.is_distinct_from("transcript")))),
             "media": media,
+            "code": lambda: or_(exists().where(ItemLink.item_id == Item.id, ItemLink.domain.in_(CODE_DOMAINS)),
+                                Item.search_text.op("~")(CODE_TEXT_REGEX)),
         }[v]()
 
     def state(self, v: str) -> ColumnElement[bool]:
@@ -829,7 +890,7 @@ class _Compiler:
             "starred": lambda: Item.starred,
             "read": lambda: Item.read_at.is_not(None),
             "unread": lambda: Item.read_at.is_(None),
-            "untagged": lambda: _tag_count(self.namespace) == 0,
+            "untagged": lambda: _no_tags(self.namespace),
             "archived": lambda: Item.archived_at.is_not(None),
             # a member of a thread, or the root other held posts point at
             "thread": lambda: or_(_relation("thread_member"), exists().where(

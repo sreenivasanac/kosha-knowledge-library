@@ -11,6 +11,7 @@ The client, the request packing and the price constants are Constella's
 - The two request layouts agree only 92 to 97% at 0.8, and the cache key does
   not include the layout. Every call here uses the one layout `JEV_LAYOUT`.
 """
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -55,6 +56,11 @@ SELECT i.id, left(concat_ws(E'\\n',
 FROM items i
 WHERE i.user_id = :user_id AND i.id = ANY(:ids)
 """)
+
+
+# Ask sets this around one pipeline call: the most that call's Jev stages may
+# spend (what is left of the question's allowance). None means no such limit.
+call_allowance: ContextVar[float | None] = ContextVar("jev_call_allowance", default=None)
 
 
 class BudgetError(RuntimeError):
@@ -152,6 +158,10 @@ def run_spend(session: Session, user_id: int, run_id: int) -> float:
 def check_budget(session: Session, user_id: int, usd: float, run: LabelRun | None = None) -> None:
     """Refuse a call that would pass a budget. A label run has its own budget
     (set when it started); a call outside a run may spend `jev_run_budget_usd`."""
+    allowance = call_allowance.get()
+    if allowance is not None and usd > allowance:
+        raise BudgetError(f"est ${usd:.4f} is over what this question may still spend on Jev (${allowance:.4f}); "
+                          "narrow the set first (head N, or a tighter filter)")
     settings = load_settings(session, user_id)
     spent = month_spend(session, user_id)
     if spent + usd > settings["jev_monthly_budget_usd"]:

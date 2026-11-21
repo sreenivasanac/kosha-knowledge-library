@@ -284,6 +284,27 @@ def test_jev_threshold_cache_and_ledger(session, user, lib, fake):
     assert q(session, user, 'all | jev "Is this about retrieval-augmented generation?" | where -p:>=0.9')["n"] == N_ROBOT + N_COOK
 
 
+def test_jev_failure_midway_keeps_the_paid_part_in_the_ledger(session, user, lib, fake, monkeypatch):
+    """A call that fails after some requests were answered: those answers are
+    cached and billed, so the ledger must show them and the retry asks the rest."""
+    real = fake.ask
+
+    def half_then_fail(pairs, by):
+        answers, spend = real(pairs[:10], by)
+        error = jev.cj.JevError("connection dropped")
+        error.partial = (answers + [None] * (len(pairs) - 10), spend)
+        raise error
+
+    monkeypatch.setattr(fake, "ask", half_then_fail)
+    message = err(session, user, 'all | jev "Is this about retrieval-augmented generation?"').message
+    assert "connection dropped" in message and "$0.0100 was spent on 10 answers" in message
+    row = session.scalars(select(SpendLedger).where(SpendLedger.operation == "jev_failed")).one()
+    assert float(row.amount_usd) == pytest.approx(0.01) and row.meta["asked"] == 10
+    monkeypatch.setattr(fake, "ask", real)
+    again = q(session, user, 'all | jev "Is this about retrieval-augmented generation?"')
+    assert f"asked={lib['all'] - 11} cached=10" in again["text"]
+
+
 def test_jev_score_budget_and_confirm(session, user, lib, fake, monkeypatch):
     scored = q(session, user, 'where from:ada | head 3 | jev score "How useful is this for building a RAG system?" as use | show id use')
     assert [r["use"] for r in scored["rows"]] == [0.95] * 3
@@ -323,6 +344,17 @@ def test_score_labels(session, user, lib, fake):
     assert applied["batch_id"] and "new=36" in applied["text"]
     rag_rows = rows_of(session, 61)
     assert len(rag_rows) == N_RAG and all(r.role == "primary" and r.attached_by == "agent" and r.confidence == 0.95 for r in rag_rows.values())
+
+
+def test_score_labels_skips_a_parent_without_a_definition(session, user, lib, fake):
+    """A parent that only groups its children is not asked about; a leaf without
+    a definition still is (by its name)."""
+    box = tag(session, user, "Retrieval things", 64)
+    tag(session, user, "RAG", 65, box, description="Retrieval augmented generation: retrieving documents to ground answers")
+    tag(session, user, "Robot builds", 66)
+    session.commit()
+    dry = q(session, user, "all | score_labels")
+    assert "labels 2 " in dry["text"] and "Retrieval things/RAG  30" in dry["text"] and "Robot builds  6" in dry["text"]
 
 
 # --- Writes -----------------------------------------------------------------

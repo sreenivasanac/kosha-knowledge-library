@@ -10,7 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.routing import Route
 
 from kosha import auth, media
-from kosha.api import captures, items, lists, misc, pipeline, removals, search, tags
+from kosha.api import account, ai, captures, items, lists, misc, pipeline, removals, search, tags
 from kosha.config import (
     API_PREFIX,
     APP_NAME,
@@ -100,7 +100,7 @@ def create_app() -> FastAPI:
     api.include_router(auth.router)
     # Everything below needs a signed-in user or a bearer token.
     protected = [Depends(auth.current_user)]
-    for module in (captures, items, tags, misc, search, lists, removals, pipeline):
+    for module in (captures, items, tags, misc, search, lists, removals, pipeline, ai, account):
         api.include_router(module.router, dependencies=protected)
     if not public_docs:
         api.add_api_route("/openapi.json", lambda: app.openapi(), dependencies=protected, include_in_schema=False)
