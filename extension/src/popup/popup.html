@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title></title>
+    <style>
+      body { width: 320px; margin: 0; padding: 12px; font: 13px/1.4 system-ui, sans-serif; color: #111; }
+      h1 { font-size: 15px; margin: 0 0 8px; }
+      h2 { font-size: 13px; margin: 14px 0 4px; }
+      label { display: block; margin-top: 6px; }
+      input { width: 100%; box-sizing: border-box; padding: 4px 6px; font: inherit; }
+      button { font: inherit; padding: 4px 10px; margin: 6px 6px 0 0; cursor: pointer; }
+      .muted { color: #555; }
+      .danger { border: 1px solid #b00020; color: #b00020; background: #fff; border-radius: 4px; }
+      [hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <h1 id="title"></h1>
+
+    <label for="server">Kosha server URL</label>
+    <input id="server" type="url" />
+    <label for="token">API token</label>
+    <input id="token" type="password" autocomplete="off" />
+    <button id="save">Save</button>
+    <button id="test">Test connection</button>
+    <div id="connection" class="muted" role="status"></div>
+
+    <h2>Last capture</h2>
+    <div id="last" class="muted" role="status"></div>
+    <div id="outbox" class="muted"></div>
+
+    <h2>X bookmarks</h2>
+    <div id="backfill" class="muted" role="status"></div>
+    <button id="backfill-start">Backfill</button>
+    <button id="backfill-pause" hidden>Pause</button>
+    <button id="backfill-resume" hidden>Resume</button>
+    <button id="backfill-stop" hidden>Stop</button>
+
+    <h2>LinkedIn saved posts</h2>
+    <button id="linkedin-open">Open saved posts</button>
+    <div class="muted">Then press Capture in the panel on that page.</div>
+
+    <h2>Remove from sources</h2>
+    <div id="removal" class="muted" role="status"></div>
+    <button id="removal-check" class="danger">Remove from sources</button>
+    <button id="removal-confirm" class="danger" hidden></button>
+    <button id="removal-stop" hidden>Stop</button>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

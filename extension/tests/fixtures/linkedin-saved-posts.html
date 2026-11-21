@@ -1,0 +1,65 @@
+<!--
+  SYNTHETIC fixture, written by hand from memory of LinkedIn's saved-posts
+  markup. It is NOT a saved copy of the live page, so a passing test shows that
+  the extractor is consistent with selectors.ts, not that it matches LinkedIn.
+  Replace it with a real saved page (personal details removed) when one exists.
+-->
+<main>
+  <ul class="reusable-search__entity-result-list">
+    <li class="reusable-search__result-container">
+      <div class="entity-result" data-chameleon-result-urn="urn:li:activity:7000000000000000001">
+        <div class="entity-result__content-actor">
+          <a href="https://www.linkedin.com/in/asha-rao?miniProfileUrn=abc" class="app-aware-link">
+            <div class="presence-entity"><img src="https://media.licdn.com/avatar-asha.jpg" alt="Asha Rao" /></div>
+          </a>
+          <span class="entity-result__title-text">
+            <a href="https://www.linkedin.com/in/asha-rao?miniProfileUrn=abc"><span aria-hidden="true">Asha Rao</span><span class="visually-hidden">View Asha Rao's profile</span></a>
+          </span>
+          <div class="entity-result__primary-subtitle">Staff Engineer at Example Co</div>
+          <p class="t-black--light t-12"><span aria-hidden="true">2w •</span><span class="visually-hidden">2 weeks ago</span></p>
+        </div>
+        <a href="https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000001?updateEntityUrn=x" class="app-aware-link">
+          <p class="entity-result__content-summary">Notes on vector search in Postgres. Second sentence of the post. …see more</p>
+        </a>
+        <div class="entity-result__content-image">
+          <img src="https://media.licdn.com/post-image-1.jpg" alt="diagram" />
+        </div>
+        <div class="entity-result__actions-overflow-menu-dropdown">
+          <button class="artdeco-dropdown__trigger" aria-label="Click to take more actions on Asha Rao's post"></button>
+        </div>
+      </div>
+    </li>
+
+    <li class="reusable-search__result-container">
+      <div class="entity-result" data-chameleon-result-urn="urn:li:activity:7000000000000000002">
+        <div class="entity-result__content-actor">
+          <span class="entity-result__title-text">
+            <a href="/company/example-labs/"><span aria-hidden="true">Example Labs</span></a>
+          </span>
+          <div class="entity-result__primary-subtitle">12,345 followers</div>
+          <p class="t-black--light t-12"><span aria-hidden="true">3d</span></p>
+        </div>
+        <p class="entity-result__content-summary">Worth reading.<button class="reusable-search-show-more-link" id="see-more-2">see more</button></p>
+        <a href="/feed/update/urn:li:activity:7000000000000000002/">Open</a>
+        <div class="entity-result__content-embedded-object">
+          <span class="entity-result__title-text">
+            <a href="/in/ben-okafor/"><span aria-hidden="true">Ben Okafor</span></a>
+          </span>
+          <a href="/feed/update/urn:li:activity:6999999999999999999/">
+            <p class="entity-result__content-summary">The original post about evals.</p>
+          </a>
+          <video src="blob:https://www.linkedin.com/1234" poster="https://media.licdn.com/poster-9.jpg"></video>
+        </div>
+        <div class="entity-result__actions-overflow-menu-dropdown">
+          <button class="artdeco-dropdown__trigger" aria-label="Click to take more actions on Example Labs' post"></button>
+        </div>
+      </div>
+    </li>
+
+    <li class="reusable-search__result-container">
+      <div class="entity-result">
+        <p class="entity-result__content-summary">A card with no urn and no link, which must be skipped.</p>
+      </div>
+    </li>
+  </ul>
+</main>

@@ -1,0 +1,45 @@
+# Kosha: API server, worker and Postgres with pgvector.
+# NOT TESTED: written on a machine without Docker.
+# Secrets (KOSHA_SECRET_KEY, KOSHA_ADMIN_EMAIL, KOSHA_ADMIN_PASSWORD,
+# KOSHA_API_TOKEN, API keys) come from .env; DATABASE_URL is set here.
+x-backend: &backend
+  build: ./backend
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://kosha:kosha@db:5432/kosha
+    KOSHA_MEDIA_DIR: /data/media
+  volumes:
+    - ./data:/data
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: pgvector/pgvector:pg17  # includes pg_trgm and ltree
+    environment:
+      POSTGRES_USER: kosha
+      POSTGRES_PASSWORD: kosha
+      POSTGRES_DB: kosha
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kosha -d kosha"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    <<: *backend
+    ports:
+      - "127.0.0.1:8000:8000"  # the reverse proxy sits in front
+
+  worker:
+    <<: *backend
+    # Until the job queue exists, the worker's one job is the media store.
+    command: ["sh", "-c", "while true; do kosha media-fetch; sleep 300; done"]
+
+volumes:
+  pgdata:
