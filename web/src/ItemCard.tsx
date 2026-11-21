@@ -113,19 +113,26 @@ interface MediaOrigin {
   source: string;
 }
 
+/** Kosha has no file for this media, only its poster (LinkedIn videos and documents): the poster, linked to the post. */
+const posterOnly = (m: Media) => !m.stored && !m.remote_url && !m.variants?.length;
+
+function Poster({ m, maxHeight, origin }: { m: Media; maxHeight: number; origin?: MediaOrigin }) {
+  const document = m.type === 'document';
+  const Icon = document ? FileText : Play;
+  return (
+    <a href={origin?.url ?? '#'} target="_blank" rel="noopener noreferrer" style={{ aspectRatio: ratio(m, 0.6, 2.4), maxHeight }} className="relative block w-full overflow-hidden rounded-lg border border-line bg-sunken">
+      {m.preview_url && <img src={m.preview_url} alt={m.alt_text ?? ''} loading="lazy" className="absolute inset-0 h-full w-full object-contain" />}
+      <span className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-black/70 px-3 py-2 text-sm font-medium text-white">
+        <Icon size={14} aria-hidden /> Open on {sourceName(origin?.source ?? 'the source')} to {document ? 'read the document' : 'play'}
+      </span>
+    </a>
+  );
+}
+
 function Video({ m, maxHeight, origin }: { m: Media; maxHeight: number; origin?: MediaOrigin }) {
   const gif = m.type === 'animated_gif';
   const box = { aspectRatio: ratio(m, 0.6, 2.4), maxHeight };
-  // LinkedIn gives a poster but often no file: show it, and say where the video plays.
-  if (!m.stored && !m.remote_url && !m.variants?.length)
-    return (
-      <a href={origin?.url ?? '#'} target="_blank" rel="noopener noreferrer" style={box} className="relative block w-full overflow-hidden rounded-lg border border-line bg-sunken">
-        {m.preview_url && <img src={m.preview_url} alt={m.alt_text ?? ''} loading="lazy" className="absolute inset-0 h-full w-full object-contain" />}
-        <span className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-black/70 px-3 py-2 text-sm font-medium text-white">
-          <Play size={14} aria-hidden /> Open on {sourceName(origin?.source ?? 'the source')} to play
-        </span>
-      </a>
-    );
+  if (posterOnly(m)) return <Poster m={m} maxHeight={maxHeight} origin={origin} />;
   return (
     <video
       src={bestVideoSrc(m)}
@@ -174,11 +181,15 @@ export function MediaBlock({ media, place = 'list', origin }: { media: Media[]; 
         </div>
       )}
       {more > 0 && shown.length === 0 && <p className="text-sm text-ink-3">and {more} more; open the item to see all {media.length}</p>}
-      {other.map((m) => (
-        <a key={m.id} href={m.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-accent">
-          <FileText size={16} aria-hidden /> Open {m.type}
-        </a>
-      ))}
+      {other.map((m) =>
+        posterOnly(m) && m.preview_url ? (
+          <Poster key={m.id} m={m} maxHeight={maxHeight} origin={origin} />
+        ) : (
+          <a key={m.id} href={m.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-accent">
+            <FileText size={16} aria-hidden /> Open {m.type}
+          </a>
+        ),
+      )}
     </div>
   );
 }
@@ -490,6 +501,7 @@ export function ItemCard({ item, view }: { item: Item; view: View }) {
           <div className="min-w-0 flex-1">{header}</div>
           <SelectBox item={item} selected={selected} show={selecting} />
         </div>
+        {item.author.headline && <p className="-mt-1 truncate text-sm text-ink-3">{item.author.headline}</p>}
         <Cover item={item} />
         {item.title && <h3 className="line-clamp-2 font-semibold leading-snug">{item.title}</h3>}
         {item.unavailable_reason ? <p className="text-sm text-ink-2">{item.unavailable_reason}</p> : <p className={`whitespace-pre-wrap break-words text-[0.933rem] leading-relaxed ${item.media.length ? 'line-clamp-4' : 'line-clamp-[9]'}`}>{item.body}</p>}

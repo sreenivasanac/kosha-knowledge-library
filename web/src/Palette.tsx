@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { runAction, tagByPath } from './actions';
 import { api, flattenTags, getCapabilities, queryClient, tagsQuery, useLists, useSavedViews } from './api';
-import { SORTS, VIEWS, type View } from './constants';
+import { SORTS, VIEWS, X_API_SYNC_SOURCE, type View } from './constants';
 import { ACTIONS } from './keymap';
 import { getRouter, goQuery, goTo, setSearch } from './nav';
 import { quoteValue } from './query';
@@ -24,8 +24,9 @@ interface Command {
 export async function startSync() {
   if (!getCapabilities().sync) return toast('Sync from the X API is not available on this server yet');
   try {
-    await api('/api/sync', { method: 'POST' });
-    toast('Sync started');
+    const { status } = await api<{ status: string }>('/api/sync', { method: 'POST', body: { source: X_API_SYNC_SOURCE } });
+    if (status === 'disabled') toast('X API sync is switched off. Turn it on in Settings first.', { error: true });
+    else toast(status === 'running' ? 'A sync is already running' : 'Sync started');
     void queryClient.invalidateQueries({ queryKey: ['sync'] });
   } catch (error) {
     toastError(error);

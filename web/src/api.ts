@@ -199,13 +199,15 @@ export interface Capabilities {
   tokens: boolean;
   sync: boolean;
   ask: boolean;
+  /** Ask as a stream of steps. */
+  askStream: boolean;
   query: boolean;
   spend: boolean;
   mediaStatus: boolean;
   /** Rename and delete a list. */
   listEdit: boolean;
 }
-const NO_CAPABILITIES: Capabilities = { search: false, parse: false, suggest: false, savedViews: false, lists: false, jev: false, mediaText: false, removals: false, tokens: false, sync: false, ask: false, query: false, spend: false, mediaStatus: false, listEdit: false };
+const NO_CAPABILITIES: Capabilities = { search: false, parse: false, suggest: false, savedViews: false, lists: false, jev: false, mediaText: false, removals: false, tokens: false, sync: false, ask: false, askStream: false, query: false, spend: false, mediaStatus: false, listEdit: false };
 
 async function fetchCapabilities(): Promise<Capabilities> {
   const doc = await api<{ paths: Record<string, Record<string, { parameters?: { name: string }[] }>> }>('/api/openapi.json');
@@ -222,6 +224,7 @@ async function fetchCapabilities(): Promise<Capabilities> {
     tokens: has('/api/tokens'),
     sync: has('/api/sync'),
     ask: has('/api/ask'),
+    askStream: has('/api/ask/stream'),
     query: has('/api/query'),
     spend: has('/api/spend'),
     mediaStatus: has('/api/media-text/status'),
@@ -288,6 +291,13 @@ export async function fetchItems(p: ItemsParams): Promise<ItemPageResult> {
   if (p.archived) search.set('archived', 'true');
   let leftover: string[] = [];
   const caps = await queryClient.ensureQueryData(capabilitiesQuery);
+  // A list on its own, in the default order: the list's hand-made order, which only the list endpoint knows.
+  // ponytail: the whole list comes as one page; page it when lists grow past a few hundred items.
+  const list = caps.lists && !p.snap && !p.archived && p.sort === DEFAULT_SORT ? await listOfQuery(p.q) : undefined;
+  if (list) {
+    const { items } = await api<{ items: Item[] }>(`/api/lists/${list.id}`);
+    return { items, page: 1, page_size: items.length, total: items.length, pages: 1, leftover };
+  }
   if (caps.search) {
     const snapKey = JSON.stringify([p.q, p.mode, p.sort, p.archived]);
     // Syntax is checked first, so a half-typed qualifier shows its error without a failed request.
@@ -323,10 +333,19 @@ export const useSavedViews = () => {
   const enabled = useCapabilities().savedViews;
   return useQuery({ queryKey: ['saved-views'], queryFn: () => api<SavedView[]>('/api/saved-views'), enabled }).data ?? [];
 };
+export const listsQuery = { queryKey: ['lists'], queryFn: () => api<ItemList[]>('/api/lists') };
 export const useLists = () => {
   const enabled = useCapabilities().lists;
-  return useQuery({ queryKey: ['lists'], queryFn: () => api<ItemList[]>('/api/lists'), enabled }).data ?? [];
+  return useQuery({ ...listsQuery, enabled }).data ?? [];
 };
+
+/** The list a search shows when it is exactly one `list:` qualifier; such a view is in the list's own order and can be reordered. */
+export async function listOfQuery(q: string): Promise<ItemList | undefined> {
+  const tokens = tokenize(q);
+  if (tokens.length !== 1 || tokens[0].key !== 'list' || tokens[0].negated) return undefined;
+  const name = tokens[0].value!.toLowerCase();
+  return (await queryClient.ensureQueryData(listsQuery)).find((l) => l.name.toLowerCase() === name);
+}
 
 /** A tag tree as a flat list with full paths, for type-ahead. */
 export interface FlatTag {

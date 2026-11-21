@@ -39,6 +39,10 @@ export const DOUBTFUL_BELOW = 0.9;
 /** Example shown in the Jev dialog: Jev reads literally, so a full sentence works best. */
 export const JEV_EXAMPLE_QUESTION = 'Is this post about retrieval-augmented generation (RAG)?';
 export const PIPELINE_HISTORY_MAX = 50;
+/** The one sync `POST /api/sync` runs on the server: the official X API bookmark sync. */
+export const X_API_SYNC_SOURCE = 'x_api';
+/** A media-text run estimated above this (USD) does not put the keyboard focus on Start. */
+export const MEDIA_TEXT_CAREFUL_USD = 1;
 /** How often the sidebar asks the server for sync status. */
 export const SYNC_POLL_MS = 60_000;
 /** How often the Archive page asks the extension for removal progress. */

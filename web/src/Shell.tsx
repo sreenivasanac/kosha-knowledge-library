@@ -5,7 +5,7 @@ import { Archive, ChevronRight, CircleDot, HelpCircle, Inbox, LogOut, MessageCir
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { runAction } from './actions';
 import { api, collectionsQuery, facetsQuery, flattenTags, invalidateLibrary, meQuery, statsQuery, tagsQuery, useCapabilities, useLists, useSavedViews, type TagNode } from './api';
-import { APP_NAME, SYNC_POLL_MS } from './constants';
+import { APP_NAME, SYNC_POLL_MS, X_API_SYNC_SOURCE } from './constants';
 import { ago, fullDate } from './format';
 import { Drawer } from './Drawer';
 import { KeyboardLayer } from './KeyboardLayer';
@@ -48,8 +48,11 @@ function TagTree({ q }: { q: string }) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState('');
   const [closed, setClosed] = useState<Set<number>>(new Set());
-  const approved = (nodes: TagNode[]): TagNode[] => nodes.filter((n) => n.status !== 'proposed' && n.status !== 'rejected').map((n) => ({ ...n, children: approved(n.children) }));
-  const tree = approved(tags.data ?? []);
+  const pick = (nodes: TagNode[], keep: (n: TagNode) => boolean): TagNode[] => nodes.filter(keep).map((n) => ({ ...n, children: pick(n.children, keep) }));
+  const approved = pick(tags.data ?? [], (n) => n.status !== 'proposed' && n.status !== 'rejected');
+  // Nothing approved yet: the proposed tree stands in (marked as such), so a freshly organised library can be browsed before the review.
+  const proposedOnly = approved.length === 0;
+  const tree = proposedOnly ? pick(tags.data ?? [], (n) => n.status !== 'rejected') : approved;
   const token = (path: string) => `#${quoteValue(path)}`;
 
   const node = (n: TagNode, path: string, depth: number): ReactNode => {
@@ -84,43 +87,42 @@ function TagTree({ q }: { q: string }) {
         <div className="skeleton mx-2 h-16" />
       ) : tree.length === 0 ? (
         <p className="px-2 py-1 text-sm text-ink-3">
-          {/* Proposed tags are not in this tree until approved; say where they are instead of "no tags". */}
-          {(tags.data ?? []).length > 0 ? 'No approved tags yet. Review the proposed ones above, or press ' : 'No tags yet. Press '}
-          <kbd className="kbd">t</kbd> on an item to add one.
+          No tags yet. Press <kbd className="kbd">t</kbd> on an item to add one.
         </p>
       ) : (
-        <>
+        <div className={proposedOnly ? 'italic' : ''}>
+          {proposedOnly && <p className="px-2 pb-1 text-xs not-italic text-ink-3">Proposed tags, not approved yet. Review them above.</p>}
           {flattenTags(tree).length > 8 && <input aria-label="Filter tags" placeholder="Filter tags" value={filter} onChange={(e) => setFilter(e.target.value)} className="field mx-2 mb-1 h-7 w-[calc(100%-1rem)]" />}
           {filter ? matches.length ? matches.map((t) => <Row key={t.id} label={t.path} count={t.node.count} active={q === token(t.path)} onClick={() => goQuery(token(t.path))} />) : <p className="px-2 text-sm text-ink-3">No tag matches.</p> : tree.map((n) => node(n, n.name, 0))}
-        </>
+        </div>
       )}
     </Section>
   );
 }
 
-/** What the sync endpoint reports; every field is optional because the server decides the shape. */
-export interface SyncInfo {
-  status?: string;
-  running?: boolean;
-  enabled?: boolean;
-  last_sync_at?: string | null;
-  last_run_at?: string | null;
-  last_error?: string | null;
+/** One row of `GET /api/sync`: the last run of a sync. `state` is that run's summary (`status`, `pages`, `items_new`, `spent_usd`, `last_run_at`). */
+export interface SyncRow {
+  source: string;
+  state: Record<string, unknown> | null;
+  updated_at: string;
+  running: boolean;
 }
-export const syncQuery = { queryKey: ['sync'], queryFn: () => api<SyncInfo>('/api/sync'), refetchInterval: SYNC_POLL_MS };
+export const syncQuery = { queryKey: ['sync'], queryFn: () => api<SyncRow[]>('/api/sync'), refetchInterval: SYNC_POLL_MS };
+export const xApiSync = (rows: SyncRow[] | undefined) => rows?.find((r) => r.source === X_API_SYNC_SOURCE);
 
 /** Sidebar footer line: when the extension last delivered, and the X API sync's state when the server has one. */
 function SyncStatus({ lastCapture }: { lastCapture: string | null }) {
   const caps = useCapabilities();
-  const sync = useQuery({ ...syncQuery, enabled: caps.sync }).data;
-  const running = sync?.running || sync?.status === 'running';
-  const lastSync = sync?.last_sync_at ?? sync?.last_run_at;
+  const sync = xApiSync(useQuery({ ...syncQuery, enabled: caps.sync }).data);
+  const running = !!sync?.running;
+  const lastSync = sync?.updated_at;
+  const failed = sync?.state?.status === 'parse_error';
   return (
     <p role="status" className="flex items-center gap-1.5 border-t border-line px-3 py-1.5 text-xs text-ink-3" title={lastCapture ? `Last capture from the extension: ${fullDate(lastCapture)}` : undefined}>
       <RefreshCw size={11} aria-hidden className={running ? 'animate-spin' : ''} />
       <span className="min-w-0 flex-1 truncate">
-        {running ? 'Syncing from the X API…' : sync?.last_error ? `Sync failed: ${sync.last_error}` : lastCapture ? `Last capture ${ago(lastCapture)}` : 'Nothing captured yet'}
-        {!running && !sync?.last_error && lastSync && ` · API sync ${ago(lastSync)}`}
+        {running ? 'Syncing from the X API…' : failed ? 'The last API sync could not be read' : lastCapture ? `Last capture ${ago(lastCapture)}` : 'Nothing captured yet'}
+        {!running && !failed && lastSync && ` · API sync ${ago(lastSync)}`}
       </span>
     </p>
   );

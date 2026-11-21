@@ -1,10 +1,11 @@
 /** Ask (`g k`): a question answered from the library, with the cited items as normal cards and how the search went. */
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { useEffect, useLayoutEffect, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { focusItem } from './actions';
 import { parseAnswer, type Inline } from './answer';
 import { api, ApiError, useCapabilities, type Item, type ItemPage } from './api';
+import { CSRF_HEADER_VALUE } from './constants';
 import { usd } from './format';
 import { ItemCard } from './ItemCard';
 import { COLUMN } from './Library';
@@ -13,12 +14,63 @@ import { setState } from './store';
 import { PageHeader } from './TagsPage';
 import { ErrorNote, Unavailable } from './ui';
 
+/** One read-only pipeline Ask ran: how many items it ended with, and each stage's in→out (or the error). */
+interface Step {
+  pipeline: string;
+  n: number | null;
+  note?: string | null;
+}
 interface AskReply {
   answer: string;
   items: number[];
-  steps: { pipeline: string; n: number | null; note?: string | null }[];
-  spent?: number | null;
+  steps: Step[];
+  spent?: { llm_usd: number; jev_usd: number } | null;
   took_ms?: number | null;
+  model?: string | null;
+}
+
+/**
+ * `POST /api/ask/stream`: server-sent events, one `step` per pipeline as it
+ * finishes, then `done` with the whole reply (or `error`). Read with fetch,
+ * because EventSource cannot send a POST.
+ */
+async function askStream(question: string, onStep: (step: Step) => void): Promise<AskReply> {
+  const response = await fetch('/api/ask/stream', { method: 'POST', credentials: 'same-origin', headers: { 'X-Requested-With': CSRF_HEADER_VALUE, 'content-type': 'application/json' }, body: JSON.stringify({ question }) });
+  // Anything but a stream: the plain endpoint gives the same answer, or the proper error.
+  if (!response.ok || !response.body) return api<AskReply>('/api/ask', { method: 'POST', body: { question } });
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) throw new ApiError(502, 'The answer stopped before it was finished');
+    buffer += value;
+    let end: number;
+    while ((end = buffer.indexOf('\n\n')) >= 0) {
+      const event = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      const name = /^event: (.*)$/m.exec(event)?.[1];
+      const data = JSON.parse(/^data: (.*)$/m.exec(event)?.[1] ?? 'null');
+      if (name === 'step') onStep(data);
+      else if (name === 'done') return data;
+      else if (name === 'error') throw new ApiError(503, data?.message ?? 'Ask failed');
+    }
+  }
+}
+
+function Steps({ steps }: { steps: Step[] }) {
+  return (
+    <ol className="divide-y divide-line">
+      {steps.map((step, i) => (
+        <li key={i} className="space-y-0.5 px-3 py-1.5">
+          <div className="flex items-baseline gap-3">
+            <code className="min-w-0 flex-1 break-words font-mono text-[0.85em]">{step.pipeline}</code>
+            {step.n != null && <span className="shrink-0 tabular-nums text-ink-2">{step.n.toLocaleString()}</span>}
+          </div>
+          {step.note && <div className={`break-words text-xs ${step.note.startsWith('error') ? 'text-danger' : 'text-ink-3'}`}>{step.note}</div>}
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 function InlineText({ parts }: { parts: Inline[] }) {
@@ -92,7 +144,19 @@ export function AskPage() {
   const question = (useSearch({ strict: false }) as LibrarySearch).q ?? '';
 
   // Asking costs money, so an answer is kept for the session and never retried or refetched on its own.
-  const ask = useQuery({ queryKey: ['ask', question], queryFn: () => api<AskReply>('/api/ask', { method: 'POST', body: { question } }), enabled: !!question && caps.ask, staleTime: Infinity, gcTime: Infinity, retry: false });
+  /** The steps of the question being answered, as they arrive. */
+  const [live, setLive] = useState<Step[]>([]);
+  const ask = useQuery({
+    queryKey: ['ask', question],
+    queryFn: () => {
+      setLive([]);
+      return caps.askStream ? askStream(question, (step) => setLive((old) => [...old, step])) : api<AskReply>('/api/ask', { method: 'POST', body: { question } });
+    },
+    enabled: !!question && caps.ask,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+  });
   const ids = ask.data?.items ?? [];
   // The cited items through the normal list endpoint, so they render (and act) as cards do everywhere.
   const cited = useQuery({ queryKey: ['items', 'ask', ids], queryFn: () => api<ItemPage>(`/api/items?${new URLSearchParams({ q: `id:${ids.join(',')}`, page_size: '100' })}`), enabled: ids.length > 0 });
@@ -140,7 +204,12 @@ export function AskPage() {
               )}
             </div>
           ) : ask.isFetching ? (
-            <div className="space-y-2" aria-busy="true" aria-label="Searching and answering">
+            <div className="space-y-3" aria-busy="true" aria-label="Searching and answering">
+              {live.length > 0 && (
+                <div className="rounded-lg border border-line bg-surface text-sm">
+                  <Steps steps={live} />
+                </div>
+              )}
               <div className="skeleton h-5 w-11/12" />
               <div className="skeleton h-5 w-4/5" />
               <div className="skeleton h-5 w-2/3" />
@@ -154,17 +223,11 @@ export function AskPage() {
                 <summary className="px-3 py-2 font-medium text-ink-2">
                   How it searched: {reply.steps.length} step{reply.steps.length === 1 ? '' : 's'}
                   {reply.took_ms != null && `, ${(reply.took_ms / 1000).toFixed(1)} s`}
-                  {reply.spent != null && `, ${usd(reply.spent)}`}
+                  {reply.spent != null && `, ${usd(reply.spent.llm_usd + reply.spent.jev_usd)}`}
                 </summary>
-                <ol className="divide-y divide-line border-t border-line">
-                  {reply.steps.map((step, i) => (
-                    <li key={i} className="flex items-baseline gap-3 px-3 py-1.5">
-                      <code className="min-w-0 flex-1 break-words font-mono text-[0.85em]">{step.pipeline}</code>
-                      {step.note && <span className="text-ink-3">{step.note}</span>}
-                      {step.n != null && <span className="shrink-0 tabular-nums text-ink-2">{step.n.toLocaleString()}</span>}
-                    </li>
-                  ))}
-                </ol>
+                <div className="border-t border-line">
+                  <Steps steps={reply.steps} />
+                </div>
               </details>
             </>
           ) : null}

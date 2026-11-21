@@ -49,6 +49,8 @@ export const ACTIONS: ActionDef[] = [
   { id: 'item.archive', area: 'Act', label: 'Mark for deletion (to Archive)', keys: 'd' },
   { id: 'undo', area: 'Act', label: 'Undo the last action', keys: 'z' },
   { id: 'item.list', area: 'Act', label: 'Add to list', keys: 'l' },
+  { id: 'list.moveUp', area: 'Act', label: 'Move up in the list (when viewing one list)', keys: 'Alt+ArrowUp' },
+  { id: 'list.moveDown', area: 'Act', label: 'Move down in the list', keys: 'Alt+ArrowDown' },
   { id: 'item.copyLink', area: 'Act', label: 'Copy link', keys: 'c' },
   { id: 'item.copyMarkdown', area: 'Act', label: 'Copy as Markdown', keys: 'Shift+c' },
   { id: 'item.mediaText', area: 'Act', label: 'Get media text', keys: 'm' },

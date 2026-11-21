@@ -1,7 +1,7 @@
 /** The main view (also the Archive): search bar, tag chip row, the items in one of three layouts, numbered pages. */
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
-import { Archive, ArchiveRestore, BookmarkPlus, ChevronLeft, ChevronRight, LayoutGrid, List, ListPlus, Menu, Rows3, Sparkles, Star, Tag, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, BookmarkPlus, Captions, ChevronLeft, ChevronRight, LayoutGrid, List, ListPlus, Menu, Rows3, Sparkles, Star, Tag, Trash2, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { runAction, setArchived } from './actions';
 import { ArchiveTools, deleteForever } from './ArchiveTools';
@@ -103,6 +103,7 @@ function BulkBar({ archived }: { archived: boolean }) {
       {button('Star', 'item.star', <Star size={15} />)}
       {button('Read', 'item.read', <List size={15} />)}
       {button('Add to list', 'item.list', <ListPlus size={15} />)}
+      {button('Media text', 'item.mediaText', <Captions size={15} />)}
       <span className="flex-1" />
       <button className="btn btn-ghost h-8 px-2 text-ink-3" aria-label="Clear the selection" onClick={() => setState({ selection: new Set() })}>
         <span className="max-sm:hidden">Clear</span>

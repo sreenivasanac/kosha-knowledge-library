@@ -3,7 +3,7 @@
  * buttons and the bulk bar all call `runAction(id)`, so behaviour lives once.
  * Single-item actions apply to the selection when one exists (`targetIds`).
  */
-import { api, fetchItems, flattenTags, invalidateLibrary, queryClient, tagsQuery, type Item, type ItemPage, type TagNode } from './api';
+import { api, fetchItems, flattenTags, invalidateLibrary, listOfQuery, queryClient, tagsQuery, type Item, type ItemPage, type TagNode } from './api';
 import { currentSearch, goQuery, goTo, hasDrawer, isLibraryPath, pathname, setSearch, withDefaults } from './nav';
 import { toggleToken } from './query';
 import { activeId, closeOverlay, drawerId, getState, openOverlay, setState, targetIds, toast, toastError } from './store';
@@ -259,6 +259,8 @@ const handlers: Record<string, () => void> = {
   'item.archive': needTargets((ids) => setArchived(ids, pathname() !== '/archive')),
   undo: () => void undo(),
   'item.list': needTargets((ids) => openOverlay({ kind: 'lists', ids })),
+  'list.moveUp': () => void moveInList(-1),
+  'list.moveDown': () => void moveInList(1),
   'item.copyLink': () => {
     const items = targetItems();
     if (items.length) void copy(items.map((i) => i.url).join('\n'), items.length === 1 ? 'link' : `${items.length} links`);
@@ -291,6 +293,24 @@ const handlers: Record<string, () => void> = {
   'view.compact': () => setView('compact'),
   help: () => openOverlay({ kind: 'help' }),
 };
+
+/** Moves the focused item one place in the list being viewed, and saves the list's new order. */
+async function moveInList(delta: -1 | 1) {
+  const { focusId, pageIds } = getState();
+  const list = pathname() === '/' ? await listOfQuery(currentSearch().q ?? '') : undefined;
+  if (!list) return toast('Open one list on its own (g l) to reorder it', { error: true });
+  const from = focusId == null ? -1 : pageIds.indexOf(focusId);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= pageIds.length) return;
+  const order = [...pageIds];
+  [order[from], order[to]] = [order[to], order[from]];
+  try {
+    await api(`/api/lists/${list.id}/order`, { method: 'PUT', body: { item_ids: order } });
+    invalidateLibrary();
+  } catch (error) {
+    toastError(error);
+  }
+}
 
 export function runAction(id: string) {
   (pageHandlers[id] ?? handlers[id])?.();

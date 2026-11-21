@@ -4,9 +4,9 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { askExtension, getExtensionId } from './ArchiveTools';
 import { api, keybindingsQuery, settingsQuery, useCapabilities } from './api';
 import { SEQUENCE_TIMEOUT_MS, STORAGE_KEYS } from './constants';
-import { fullDate, usd } from './format';
+import { ago, fullDate, shortDate, usd } from './format';
 import { startSync } from './Palette';
-import { syncQuery } from './Shell';
+import { syncQuery, xApiSync } from './Shell';
 import { ACTIONS, defaultBindings, findConflicts, resolveBindings, strokeOf, type Area } from './keymap';
 import { openOverlay, toast, toastError } from './store';
 import { PageHeader } from './TagsPage';
@@ -54,12 +54,117 @@ function Facts({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-/** One status endpoint as a block of facts; says so inline when the server does not have it (yet). */
-function Status({ what, path, queryKey, enabled, refetchInterval }: { what: string; path: string; queryKey: string; enabled: boolean; refetchInterval?: number }) {
-  const status = useQuery({ queryKey: [queryKey], queryFn: () => api<Record<string, unknown>>(path), enabled, refetchInterval });
-  if (!enabled) return <Unavailable what={what} />;
-  if (status.error) return <ErrorNote error={status.error} what={what} retry={() => void status.refetch()} />;
-  return status.data ? <Facts data={status.data} /> : <div className="skeleton h-12" aria-busy="true" />;
+/** The last X API sync, from `GET /api/sync`. */
+function SyncFacts() {
+  const sync = useQuery(syncQuery);
+  const row = xApiSync(sync.data);
+  if (sync.error) return <ErrorNote error={sync.error} what="Sync status" retry={() => void sync.refetch()} />;
+  if (!sync.data) return <div className="skeleton h-12" aria-busy="true" />;
+  return row ? <Facts data={{ running: row.running, ...row.state }} /> : <p className="text-sm text-ink-3">No API sync has run yet.</p>;
+}
+
+/** `GET /api/spend`: this calendar month by provider, and each monthly cap with what counts against it. */
+interface SpendReport {
+  month: string;
+  total_usd: number;
+  providers: { provider: string; usd: number; calls: number }[];
+  caps: { name: string; setting: string; cap_usd: number; spent_usd: number }[];
+}
+const CAP_LABEL: Record<string, string> = { x: 'X API sync', jev: 'Jev checks', llm: 'LLM and speech-to-text (Ask, summaries, labels, media text)' };
+
+function Spend() {
+  const spend = useQuery({ queryKey: ['spend'], queryFn: () => api<SpendReport>('/api/spend') });
+  if (spend.error) return <ErrorNote error={spend.error} what="The spending report" retry={() => void spend.refetch()} />;
+  const d = spend.data;
+  if (!d) return <div className="skeleton h-24" aria-busy="true" />;
+  return (
+    <>
+      <p className="text-sm">
+        <span className="text-2xl font-semibold tabular-nums">{usd(d.total_usd)}</span> <span className="text-ink-3">this month ({d.month})</span>
+      </p>
+      <table className="w-full text-sm">
+        <thead className="text-left text-xs text-ink-3">
+          <tr>
+            <th className="py-1 font-semibold">Provider</th>
+            <th className="py-1 text-right font-semibold">Calls</th>
+            <th className="py-1 text-right font-semibold">Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {d.providers.map((p) => (
+            <tr key={p.provider} className="border-t border-line">
+              <td className="py-1.5">{p.provider}</td>
+              <td className="py-1.5 text-right tabular-nums">{p.calls.toLocaleString()}</td>
+              <td className="py-1.5 text-right tabular-nums">{usd(p.usd)}</td>
+            </tr>
+          ))}
+          {d.providers.length === 0 && (
+            <tr className="border-t border-line">
+              <td colSpan={3} className="py-1.5 text-ink-3">
+                Nothing spent yet this month.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <h3 className="pt-1 text-xs font-semibold text-ink-3">Monthly caps</h3>
+      <ul className="space-y-2 text-sm">
+        {d.caps.map((c) => (
+          <li key={c.name}>
+            <div className="flex justify-between gap-3">
+              <span>{CAP_LABEL[c.name] ?? c.name}</span>
+              <span className="shrink-0 tabular-nums">
+                {usd(c.spent_usd)} of {usd(c.cap_usd)}
+              </span>
+            </div>
+            {/* The numbers above say it; the bar only shows how near the cap is. */}
+            <div aria-hidden className="mt-1 h-1.5 overflow-hidden rounded-full bg-sunken">
+              <div className={`h-full ${c.spent_usd >= c.cap_usd ? 'bg-danger' : 'bg-accent'}`} style={{ width: `${c.cap_usd > 0 ? Math.min(100, (c.spent_usd / c.cap_usd) * 100) : 100}%` }} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/** `GET /api/media-text/status`. `job` is the last run: its totals and the reason of each failure by media id. */
+interface MediaTextStatus {
+  counts: { none: number; queued: number; done: number; failed: number };
+  running: boolean;
+  job: (Record<string, unknown> & { errors?: Record<string, string> }) | null;
+  ffmpeg: boolean;
+}
+
+function MediaTextStatusFacts() {
+  const status = useQuery({ queryKey: ['media-text-status'], queryFn: () => api<MediaTextStatus>('/api/media-text/status'), refetchInterval: (q) => (q.state.data?.running ? 5_000 : 60_000) });
+  if (status.error) return <ErrorNote error={status.error} what="Media text progress" retry={() => void status.refetch()} />;
+  const d = status.data;
+  if (!d) return <div className="skeleton h-12" aria-busy="true" />;
+  const errors = Object.entries(d.job?.errors ?? {});
+  return (
+    <>
+      <Facts data={{ media_without_text: d.counts.none, queued: d.counts.queued, with_text: d.counts.done, failed: d.counts.failed, running: d.running }} />
+      {!d.ffmpeg && <p className="text-sm text-danger">ffmpeg is not installed on the server, so video and audio cannot be transcribed.</p>}
+      {d.job && (
+        <details className="text-sm">
+          <summary className="text-ink-2">The last run</summary>
+          <div className="pt-2">
+            <Facts data={{ ...d.job, running: undefined }} />
+            {errors.length > 0 && (
+              <ul className="mt-2 space-y-0.5 text-ink-2">
+                {errors.map(([id, reason]) => (
+                  <li key={id}>
+                    Media {id}: {reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </details>
+      )}
+    </>
+  );
 }
 
 interface Token {
@@ -86,7 +191,12 @@ function Tokens() {
       <ul className="divide-y divide-line text-sm">
         {tokens.data?.map((t) => (
           <li key={t.id} className="flex items-center justify-between gap-3 py-1.5">
-            <span>{t.name}</span>
+            <span className="min-w-0">
+              <span className="block truncate">{t.name}</span>
+              <span className="block text-xs text-ink-3">
+                Created {shortDate(t.created_at ?? null)} · {t.last_used_at ? `last used ${ago(t.last_used_at)}` : 'never used'}
+              </span>
+            </span>
             <button className="btn btn-danger h-7 px-2 text-xs" onClick={() => openOverlay({ kind: 'confirm', danger: true, title: `Revoke the token ${t.name}?`, body: 'Anything using it stops working at once.', action: 'Revoke', run: () => api(`/api/tokens/${t.id}`, { method: 'DELETE' }).then(refresh, toastError) })}>
               Revoke
             </button>
@@ -112,9 +222,18 @@ function Tokens() {
         </button>
       </form>
       {created && (
-        <p role="status" className="rounded-md bg-sunken px-3 py-2 text-sm">
-          Copy it now; it is not shown again: <code className="break-all">{created}</code>
-        </p>
+        <div role="status" className="space-y-2 rounded-md bg-sunken px-3 py-2 text-sm">
+          <p>Copy the new token now; it is not shown again.</p>
+          <div className="flex items-center gap-2">
+            <code data-secret className="min-w-0 flex-1 break-all">{created}</code>
+            <button type="button" className="btn shrink-0" onClick={() => navigator.clipboard.writeText(created).then(() => toast('Copied the token'), () => toast('The browser blocked copying', { error: true }))}>
+              Copy
+            </button>
+            <button type="button" className="btn btn-ghost shrink-0" onClick={() => setCreated(null)}>
+              Done
+            </button>
+          </div>
+        </div>
       )}
     </>
   );
@@ -300,19 +419,22 @@ export function SettingsPage() {
               </button>
               {!caps.sync && <span className="text-sm text-ink-3">Starting a sync is not available on this server yet.</span>}
             </div>
-            {caps.sync && <Status what="Sync status" path="/api/sync" queryKey={syncQuery.queryKey[0]} enabled />}
+            {caps.sync && <SyncFacts />}
           </Card>
           <Card title="Spending">
             <p className="text-sm text-ink-2">What paid work cost: X API sync, Jev checks, Ask, embeddings and media text.</p>
-            <Status what="The spending report" path="/api/spend" queryKey="spend" enabled={caps.spend} />
+            {caps.spend ? <Spend /> : <Unavailable what="The spending report" />}
           </Card>
           <Card title="Media text">
-            <p className="text-sm text-ink-2">Transcripts for video and audio, and descriptions for images. You see the count, the minutes and the cost before anything runs.</p>
-            <button className="btn" disabled={!caps.mediaText} onClick={() => openOverlay({ kind: 'mediaText', ids: 'all' })}>
-              Get text for all media without it
-            </button>
+            <p className="text-sm text-ink-2">
+              Transcripts for video and audio, and descriptions for images. In the library, press <kbd className="kbd">m</kbd> on an item, or select items and choose Media text: that runs for the selection only. You see the count, the minutes and the cost before anything runs.
+            </p>
             {!caps.mediaText && <Unavailable what="Media text" />}
-            {caps.mediaStatus && <Status what="Media text progress" path="/api/media-text/status" queryKey="media-text-status" enabled refetchInterval={10_000} />}
+            {caps.mediaStatus && <MediaTextStatusFacts />}
+            {/* The whole library is the expensive case, so it is the quiet button and only opens the estimate. */}
+            <button className="btn btn-ghost px-2 text-sm text-ink-2" disabled={!caps.mediaText} onClick={() => openOverlay({ kind: 'mediaText', ids: 'all' })}>
+              Estimate the whole library instead…
+            </button>
           </Card>
           <Card title="API tokens">
             <Tokens />

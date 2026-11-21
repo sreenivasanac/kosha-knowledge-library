@@ -1,13 +1,14 @@
 /** Everything that opens over the page: one at a time, chosen by the store's `overlay`. Plus the toasts. */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { undo } from './actions';
 import { api, invalidateLibrary, useCapabilities, useLists, type Media } from './api';
-import { JEV_DEFAULT_THRESHOLD, JEV_EXAMPLE_QUESTION } from './constants';
+import { JEV_DEFAULT_THRESHOLD, JEV_EXAMPLE_QUESTION, MEDIA_TEXT_CAREFUL_USD } from './constants';
 import { usd } from './format';
 import { ACTIONS, type Area } from './keymap';
-import { currentSearch, pathname, setSearch, withDefaults } from './nav';
+import { currentSearch, goQuery, pathname, setSearch, withDefaults } from './nav';
+import { quoteValue } from './query';
 import { Palette } from './Palette';
 import { closeOverlay, toast, toastError, useStore, type Overlay } from './store';
 import { TagPicker } from './TagPicker';
@@ -226,17 +227,27 @@ function Jev({ question: initial = '' }: { question?: string }) {
   );
 }
 
+/** `POST /api/media-text/estimate`: files without text yet, of which `images`; `minutes` of video and audio. */
+interface MediaEstimate {
+  n_media: number;
+  minutes: number;
+  images: number;
+  estimate_usd: number;
+}
+
 /** Media text: shows how many files, how many minutes and the estimated cost before anything is spent. */
 function MediaText({ ids }: { ids: number[] | 'all' }) {
   const caps = useCapabilities();
+  const client = useQueryClient();
   const target = ids === 'all' ? { all: true } : { item_ids: ids };
-  const estimate = useQuery({ queryKey: ['media-text-estimate', ids], queryFn: () => api<{ n: number; minutes: number; estimate_usd: number }>('/api/media-text/estimate', { method: 'POST', body: target }), enabled: caps.mediaText, staleTime: 0 });
+  const estimate = useQuery({ queryKey: ['media-text-estimate', ids], queryFn: () => api<MediaEstimate>('/api/media-text/estimate', { method: 'POST', body: target }), enabled: caps.mediaText, staleTime: 0 });
   const [busy, setBusy] = useState(false);
   async function start() {
     setBusy(true);
     try {
-      await api('/api/media-text/start', { method: 'POST', body: target });
-      toast(`Getting text for ${estimate.data?.n ?? ''} media file${estimate.data?.n === 1 ? '' : 's'}; it appears on the items when done`);
+      const { queued } = await api<MediaEstimate & { queued: number }>('/api/media-text/start', { method: 'POST', body: target });
+      toast(`Getting text for ${queued.toLocaleString()} media file${queued === 1 ? '' : 's'}; it appears on the items when done`);
+      void client.invalidateQueries({ queryKey: ['media-text-status'] });
       invalidateLibrary();
       closeOverlay();
     } catch (error) {
@@ -245,22 +256,30 @@ function MediaText({ ids }: { ids: number[] | 'all' }) {
     setBusy(false);
   }
   const e = estimate.data;
+  // A large run must be chosen on purpose: Enter lands on Cancel, not on Start.
+  const careful = !e || e.estimate_usd > MEDIA_TEXT_CAREFUL_USD;
+  const startButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!careful) startButton.current?.focus();
+  }, [careful]);
   return (
     <Modal label="Get media text" className="w-[min(30rem,calc(100vw-1.5rem))]">
       <Frame
         title="Get media text"
         footer={
           <>
-            <button className="btn" onClick={closeOverlay}>
+            <button data-autofocus className="btn" onClick={closeOverlay}>
               Cancel
             </button>
-            <button data-autofocus className="btn btn-primary" disabled={busy || !e || e.n === 0} onClick={start}>
-              {busy ? 'Starting…' : e ? `Start for ${usd(e.estimate_usd)}` : 'Start'}
+            <button ref={startButton} className={`btn ${careful ? 'btn-danger' : 'btn-primary'}`} disabled={busy || !e || e.n_media === 0} onClick={start}>
+              {busy ? 'Starting…' : e ? `Start ${e.n_media.toLocaleString()} file${e.n_media === 1 ? '' : 's'} for about ${usd(e.estimate_usd)}` : 'Start'}
             </button>
           </>
         }
       >
-        <p className="text-sm text-ink-2">Transcribes video and audio and describes images for {ids === 'all' ? 'every media file that has no text yet' : `${ids.length} item${ids.length === 1 ? '' : 's'}`}, so search can find what is said and shown.</p>
+        <p className="text-sm text-ink-2">
+          Transcribes video and audio and describes images for {ids === 'all' ? <strong className="text-ink">every media file in the library that has no text yet</strong> : `${ids.length.toLocaleString()} item${ids.length === 1 ? '' : 's'}`}, so search can find what is said and shown.
+        </p>
         {!caps.mediaText ? (
           <Unavailable what="Media text" />
         ) : estimate.isPending ? (
@@ -268,18 +287,23 @@ function MediaText({ ids }: { ids: number[] | 'all' }) {
         ) : estimate.error ? (
           <ErrorNote error={estimate.error} retry={() => void estimate.refetch()} what="Media text" />
         ) : (
-          <dl className="grid grid-cols-3 gap-2 text-center">
-            {[
-              ['Files', e!.n.toLocaleString()],
-              ['Minutes', e!.minutes.toLocaleString(undefined, { maximumFractionDigits: 1 })],
-              ['Estimated cost', usd(e!.estimate_usd)],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-md bg-sunken px-2 py-3">
-                <dd className="text-lg font-semibold tabular-nums">{value}</dd>
-                <dt className="text-xs text-ink-3">{label}</dt>
-              </div>
-            ))}
-          </dl>
+          <>
+            <dl className="grid grid-cols-3 gap-2 text-center">
+              {[
+                ['Files', e!.n_media.toLocaleString(), `${e!.images.toLocaleString()} image${e!.images === 1 ? '' : 's'}, ${(e!.n_media - e!.images).toLocaleString()} video or audio`],
+                ['Minutes to transcribe', e!.minutes.toLocaleString(undefined, { maximumFractionDigits: 1 }), ''],
+                ['Estimated cost', usd(e!.estimate_usd), ''],
+              ].map(([label, value, detail]) => (
+                <div key={label} className="rounded-md bg-sunken px-2 py-3">
+                  <dd className="text-2xl font-semibold tabular-nums">{value}</dd>
+                  <dt className="text-xs text-ink-3">{label}</dt>
+                  {detail && <dd className="mt-0.5 text-xs text-ink-3">{detail}</dd>}
+                </div>
+              ))}
+            </dl>
+            {e!.n_media === 0 && <p className="text-sm text-ink-2">Nothing to do: {ids === 'all' ? 'every media file has' : 'the media of these items already have'} text, or there is no media.</p>}
+            {careful && e!.n_media > 0 && <p className="text-sm text-ink-2">This is a large run. It works in the background, and the server refuses it when it would pass your monthly LLM cap.</p>}
+          </>
         )}
       </Frame>
     </Modal>
@@ -342,6 +366,8 @@ function RenameList({ id, name: initial }: { id: number; name: string }) {
             await api(`/api/lists/${id}`, { method: 'PATCH', body: { name: name.trim() } });
             toast(`Renamed the list to ${name.trim()}`);
             invalidateLibrary();
+            // A view of the list is addressed by its name: follow the rename.
+            if (pathname() === '/' && currentSearch().q === `list:${quoteValue(initial)}`) goQuery(`list:${quoteValue(name.trim())}`, true);
             closeOverlay();
           } catch (error) {
             toastError(error);
