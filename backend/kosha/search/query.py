@@ -646,8 +646,9 @@ def _compare(column, op: str, value) -> ColumnElement[bool]:
             "lt": column < value, "le": column <= value}[op]
 
 
-def _has_tag(*where) -> ColumnElement[bool]:
-    return exists().where(ItemTag.item_id == Item.id, ~ItemTag.removed_by_user, ItemTag.tag_id == Tag.id, *where)
+def _has_tag(namespace: str, *where) -> ColumnElement[bool]:
+    return exists().where(ItemTag.item_id == Item.id, ~ItemTag.removed_by_user, ItemTag.tag_id == Tag.id,
+                          ItemTag.namespace == namespace, *where)
 
 
 def _relation(kind: str, *where) -> ColumnElement[bool]:
@@ -656,16 +657,24 @@ def _relation(kind: str, *where) -> ColumnElement[bool]:
 
 SAVED_TIME = func.coalesce(Item.saved_at, Item.saved_at_est)
 BODY_LEN = func.char_length(func.coalesce(Item.body, ""))
-TAG_COUNT = (select(func.count()).select_from(ItemTag)
-             .where(ItemTag.item_id == Item.id, ~ItemTag.removed_by_user).correlate(Item).scalar_subquery())
+
+
+def _tag_count(namespace: str):
+    """Tags on the item in one namespace (a label run's trial tags do not count in `main`)."""
+    return (select(func.count()).select_from(ItemTag)
+            .where(ItemTag.item_id == Item.id, ~ItemTag.removed_by_user, ItemTag.namespace == namespace)
+            .correlate(Item).scalar_subquery())
+
+
 PLAIN_COLUMNS = {"likes": Item.likes, "reposts": Item.reposts, "replies": Item.replies, "views": Item.views,
-                 "duration": Item.duration_s, "len": BODY_LEN, "tags": TAG_COUNT}
+                 "duration": Item.duration_s, "len": BODY_LEN}
 DATE_COLUMNS = {"posted": Item.posted_at, "saved": SAVED_TIME, "captured": Item.captured_at}
 
 
 class _Compiler:
-    def __init__(self, session: Session, user_id: int, skip: tuple = ()):
+    def __init__(self, session: Session, user_id: int, skip: tuple = (), namespace: str = DEFAULT_NAMESPACE):
         self.session, self.user_id, self.skip = session, user_id, {id(n) for n in skip}
+        self.namespace = namespace  # the tag tree `#tag`, `tags:` and `is:untagged` read
         self._tags: list[tuple[Tag, str]] | None = None
 
     def node(self, n) -> ColumnElement[bool]:
@@ -682,7 +691,7 @@ class _Compiler:
         if isinstance(n, SetRef):
             return self.result_set(n)
         if n.key in TAG_MOD_KEYS:
-            return _has_tag(self.tag_mod(n))
+            return _has_tag(self.namespace, self.tag_mod(n))
         return self.pred(n)
 
     def group(self, children) -> ColumnElement[bool]:
@@ -695,7 +704,7 @@ class _Compiler:
                  if not isinstance(c, TagRef) and not (isinstance(c, Pred) and c.key in TAG_MOD_KEYS)]
         conds += [self.tag(t, mods) for t in tags]
         if mods and not tags:
-            conds.append(_has_tag(*mods))
+            conds.append(_has_tag(self.namespace, *mods))
         return and_(true(), *conds)
 
     def tag_mod(self, p: Pred) -> ColumnElement[bool]:
@@ -714,13 +723,13 @@ class _Compiler:
             where.append(Tag.path.op("<@")(cast(str(tag.path), Ltree())))
             if ref.mode == "below":
                 where.append(Tag.id != tag.id)
-        return _has_tag(*where, *mods)
+        return _has_tag(self.namespace, *where, *mods)
 
     def resolve_tag(self, ref: TagRef) -> Tag:
         """A full path from the root, or any unique tail of one (`#rag`)."""
         if self._tags is None:
             tags = {t.id: t for t in self.session.scalars(
-                select(Tag).where(Tag.user_id == self.user_id, Tag.namespace == DEFAULT_NAMESPACE))}
+                select(Tag).where(Tag.user_id == self.user_id, Tag.namespace == self.namespace))}
             self._tags = [(t, "/".join(tags[int(i)].name.lower() for i in str(t.path).split(".") if int(i) in tags))
                           for t in tags.values()]
         wanted = ref.path.lower()
@@ -744,6 +753,8 @@ class _Compiler:
         key, v = p.key, p.value
         if key in PLAIN_COLUMNS:
             return _compare(PLAIN_COLUMNS[key], p.op, v)
+        if key == "tags":
+            return _compare(_tag_count(self.namespace), p.op, v)
         if key in DATE_COLUMNS:
             lo, hi = v
             column = DATE_COLUMNS[key]
@@ -818,7 +829,7 @@ class _Compiler:
             "starred": lambda: Item.starred,
             "read": lambda: Item.read_at.is_not(None),
             "unread": lambda: Item.read_at.is_(None),
-            "untagged": lambda: TAG_COUNT == 0,
+            "untagged": lambda: _tag_count(self.namespace) == 0,
             "archived": lambda: Item.archived_at.is_not(None),
             # a member of a thread, or the root other held posts point at
             "thread": lambda: or_(_relation("thread_member"), exists().where(
@@ -839,7 +850,8 @@ def _mentions_archived(node) -> bool:
     return isinstance(node, Not) and _mentions_archived(node.child)
 
 
-def compile_filter(session: Session, user_id: int, query: Query, lift_rank_atoms: bool = False) -> list[ColumnElement[bool]]:
+def compile_filter(session: Session, user_id: int, query: Query, lift_rank_atoms: bool = False,
+                   namespace: str = DEFAULT_NAMESPACE) -> list[ColumnElement[bool]]:
     """The query as SQL conditions on `Item`, scoped to the user. By default a
     query sees saved, non-archived items. With `lift_rank_atoms` the top-level
     bare words are left out, for the ranked modes where they rank, not filter."""
@@ -849,7 +861,7 @@ def compile_filter(session: Session, user_id: int, query: Query, lift_rank_atoms
     if "archived" not in query.include and not _mentions_archived(query.filter):
         where.append(Item.archived_at.is_(None))
     if query.filter is not None:
-        compiler = _Compiler(session, user_id, query.rank_atoms if lift_rank_atoms else ())
+        compiler = _Compiler(session, user_id, query.rank_atoms if lift_rank_atoms else (), namespace)
         root = query.filter if isinstance(query.filter, And) else And((query.filter,))
         where.append(compiler.node(root))
     return where

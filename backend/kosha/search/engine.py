@@ -26,6 +26,7 @@ RANKER_TOP_N = 200  # results each ranker contributes
 SNAPSHOT_MAX_ITEMS = 500
 SNAPSHOT_TTL = timedelta(minutes=30)  # from last use
 SNAPSHOT_PREFIX = "snap-"
+PINNED_PREFIX = "jev-"  # the kept items of a Jev check (POST /api/jev/check): served whatever q says
 # (keyword weight, semantic weight) by the shape of the text (C.2).
 WEIGHTS_DEFAULT = (1.0, 1.0)
 WEIGHTS_IDENTIFIER = (2.0, 1.0)  # one or two tokens, or something that looks like an identifier
@@ -183,6 +184,15 @@ def _snapshot(session: Session, user_id: int, snapshot_id: int | None, key: str,
     return row if live else None
 
 
+def _pinned(session: Session, user_id: int, snapshot_id: int | None, now: datetime) -> ResultSet | None:
+    """A Jev check's snapshot: its pages are the kept items in Jev's order,
+    not a re-run of the search that fed the check."""
+    row = session.get(ResultSet, snapshot_id) if snapshot_id is not None else None
+    live = (row is not None and row.user_id == user_id and row.name.startswith(PINNED_PREFIX)
+            and row.expires_at and row.expires_at > now)
+    return row if live else None
+
+
 def record_search(session: Session, user_id: int, text: str) -> None:
     """Move the query to the top of the recent searches."""
     row = session.scalar(select(SearchHistory).where(SearchHistory.user_id == user_id, SearchHistory.query == text))
@@ -212,10 +222,11 @@ def search(session: Session, user_id: int, q: str, *, mode: str | None = None, s
     canonical = to_string(query)
     result = {"mode": mode, "snapshot_id": None, "refreshed": False, "notice": None, "scores": {}, "query": canonical}
 
-    if ranked or sort_key == "random":
-        now = datetime.now(UTC)
+    now = datetime.now(UTC)
+    pinned = _pinned(session, user_id, snapshot_id, now)
+    if ranked or sort_key == "random" or pinned:
         key = f"{mode}|{canonical}|{extra_key}"
-        snapshot = _snapshot(session, user_id, snapshot_id, key, now)
+        snapshot = pinned or _snapshot(session, user_id, snapshot_id, key, now)
         if snapshot is None:
             result["refreshed"] = snapshot_id is not None
             if ranked:

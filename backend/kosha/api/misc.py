@@ -64,7 +64,7 @@ def stats(user: User = Depends(current_user), session: Session = Depends(get_ses
           count(*) FILTER (WHERE is_saved AND archived_at IS NULL AND read_at IS NULL) AS unread,
           count(*) FILTER (WHERE is_saved AND archived_at IS NULL AND unavailable_reason IS NOT NULL) AS unavailable,
           count(*) FILTER (WHERE is_saved AND archived_at IS NULL AND NOT EXISTS (
-              SELECT 1 FROM item_tags t WHERE t.item_id = items.id AND NOT t.removed_by_user)) AS untagged
+              SELECT 1 FROM item_tags t WHERE t.item_id = items.id AND NOT t.removed_by_user AND t.namespace = 'main')) AS untagged
         FROM items WHERE user_id = :u
     """), {"u": user.id}).one()._asdict()
     extra = session.execute(text("""
@@ -72,7 +72,7 @@ def stats(user: User = Depends(current_user), session: Session = Depends(get_ses
           (SELECT count(*) FROM item_media m JOIN items i ON i.id = m.item_id WHERE i.user_id = :u) AS media,
           (SELECT count(*) FROM item_media m JOIN items i ON i.id = m.item_id
             WHERE i.user_id = :u AND m.local_path IS NOT NULL) AS media_stored,
-          (SELECT count(*) FROM tags WHERE user_id = :u) AS tags,
+          (SELECT count(*) FROM tags WHERE user_id = :u AND namespace = 'main') AS tags,
           (SELECT count(*) FROM collections WHERE user_id = :u) AS collections,
           (SELECT count(*) FROM captures WHERE user_id = :u) AS captures,
           (SELECT max(received_at) FROM captures WHERE user_id = :u) AS last_capture_at

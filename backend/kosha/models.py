@@ -303,6 +303,8 @@ class ResultSet(Base):
     item_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default=text("'{}'"))
     # Ranking score per id, same order; NULL for sets that carry no ranking.
     scores: Mapped[list[float] | None] = mapped_column(ARRAY(Float))
+    # Jev answers attached by pipeline stages: {alias: {item id: value 0..1}}.
+    answers: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
     expires_at: Mapped[datetime | None] = mapped_column(TZ)
 

@@ -16,7 +16,7 @@ from kosha.search.embeddings import EmbeddingError
 from kosha.search.engine import MODES, search
 from kosha.search.index import reindex
 from kosha.search.query import QueryError
-from kosha.models import DeletedItem, Item, ItemMedia, ItemRelation, ItemTag, Tag, UndoBatch, User
+from kosha.models import DeletedItem, Item, ItemMedia, ItemRelation, ItemTag, ListItem, Tag, UndoBatch, User
 from kosha.schemas import BulkIn, BulkOut, ItemDetailOut, ItemOut, ItemPage, ItemPatch
 from kosha.serialize import serialize_items, thread_items
 
@@ -141,18 +141,20 @@ def bulk(body: BulkIn, user: User = Depends(current_user), session: Session = De
     return {"updated": len(items), "undo_batch_id": batch.id}
 
 
-@router.post("/undo/{batch_id}", status_code=status.HTTP_204_NO_CONTENT)
-def undo(batch_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
-    """Put back the state a bulk action replaced. A batch can be undone once."""
+def undo_batch(session: Session, user_id: int, batch_id: int) -> None:
+    """Put back the state a bulk action or a pipeline write replaced. A batch
+    can be undone once. Commits."""
     batch = session.get(UndoBatch, batch_id)
-    if batch is None or batch.user_id != user.id:
+    if batch is None or batch.user_id != user_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Undo batch not found")
     if batch.undone_at is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Already undone")
     before = batch.before
     ids = [row["id"] for row in before["items"]]
     for row in before["items"]:
-        session.execute(update(Item).where(Item.id == row["id"], Item.user_id == user.id).values(
+        if "starred" not in row:  # a pipeline tag write: only tag rows changed
+            continue
+        session.execute(update(Item).where(Item.id == row["id"], Item.user_id == user_id).values(
             starred=row["starred"], note=row["note"],
             read_at=datetime.fromisoformat(row["read_at"]) if row["read_at"] else None,
             archived_at=datetime.fromisoformat(row["archived_at"]) if row["archived_at"] else None,
@@ -162,8 +164,8 @@ def undo(batch_id: int, user: User = Depends(current_user), session: Session = D
         session.execute(delete(ItemTag).where(ItemTag.item_id.in_(ids), ItemTag.tag_id.in_(before["tag_ids"])))
         # Tags and items may have been deleted since; their rows are not restored.
         tag_ids = [row["tag_id"] for row in before["item_tags"]]
-        live_tags = set(session.scalars(select(Tag.id).where(Tag.user_id == user.id, Tag.id.in_(tag_ids))))
-        live_items = set(session.scalars(select(Item.id).where(Item.user_id == user.id, Item.id.in_(ids))))
+        live_tags = set(session.scalars(select(Tag.id).where(Tag.user_id == user_id, Tag.id.in_(tag_ids))))
+        live_items = set(session.scalars(select(Item.id).where(Item.user_id == user_id, Item.id.in_(ids))))
         for row in before["item_tags"]:
             if row["tag_id"] not in live_tags or row["item_id"] not in live_items:
                 continue
@@ -173,8 +175,17 @@ def undo(batch_id: int, user: User = Depends(current_user), session: Session = D
                     ItemTag.item_id == row["item_id"], ItemTag.namespace == row["namespace"],
                     ItemTag.role == row["role"]).values(role="other"))
             session.add(ItemTag(**row))
+    if before.get("list"):  # the pipeline `list` stage: take out what it appended
+        session.execute(delete(ListItem).where(ListItem.list_id == before["list"]["id"],
+                                               ListItem.item_id.in_(before["list"]["added"])))
     batch.undone_at = datetime.now(UTC)
     session.commit()
+
+
+@router.post("/undo/{batch_id}", status_code=status.HTTP_204_NO_CONTENT)
+def undo(batch_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Put back the state a bulk action replaced. A batch can be undone once."""
+    undo_batch(session, user.id, batch_id)
 
 
 def delete_item(session: Session, user: User, item: Item) -> None:

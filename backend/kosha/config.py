@@ -32,6 +32,9 @@ LOGIN_MAX_FAILURES = 5  # failed logins per client address ...
 LOGIN_WINDOW_S = 60  # ... within this many seconds, then 429
 WEB_DIST_DIR = REPO_ROOT / "web" / "dist"  # the built web app, served at / when present
 
+# --- MCP --------------------------------------------------------------------
+MCP_PATH = "/mcp"  # streamable HTTP endpoint, same bearer tokens as the API
+
 # --- Lists ------------------------------------------------------------------
 PAGE_SIZES = (25, 50, 100)
 DEFAULT_PAGE_SIZE = 50
@@ -66,6 +69,10 @@ DEFAULT_SETTINGS: dict = {
     "x_api_sync_enabled": False,
     "x_api_monthly_cap_usd": 3.0,
     "page_size": DEFAULT_PAGE_SIZE,
+    # Jev (kosha/jev.py): the most one pipeline call or label run may spend,
+    # and the most all Jev calls may spend in a calendar month.
+    "jev_run_budget_usd": 0.50,
+    "jev_monthly_budget_usd": 5.0,
 }
 
 
@@ -88,6 +95,8 @@ class Settings(BaseSettings):
     kosha_x_user_id: str = ""
     # Voyage embeddings (semantic search). Without it search is keyword-only.
     voyage_api_key: str = ""
+    # TypeSafe Jev (the `jev` and `score_labels` pipeline stages).
+    typesafe_api_key: str = ""
 
 
 @lru_cache

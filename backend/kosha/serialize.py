@@ -6,6 +6,7 @@ from collections import defaultdict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from kosha.config import DEFAULT_NAMESPACE
 from kosha.models import Collection, Item, ItemCollection, ItemLink, ItemMedia, ItemRelation, ItemTag, Tag
 
 
@@ -50,7 +51,8 @@ def serialize_items(session: Session, user_id: int, items: list[Item], nest_quot
     tags = tag_names(session, user_id)
     item_tags = defaultdict(list)
     role_order = {"primary": 0, "secondary": 1, "other": 2}
-    for it in session.scalars(select(ItemTag).where(ItemTag.item_id.in_(ids), ~ItemTag.removed_by_user)):
+    for it in session.scalars(select(ItemTag).where(ItemTag.item_id.in_(ids), ~ItemTag.removed_by_user,
+                                                 ItemTag.namespace == DEFAULT_NAMESPACE)):
         tag = tags.get(it.tag_id)
         if tag:
             item_tags[it.item_id].append({

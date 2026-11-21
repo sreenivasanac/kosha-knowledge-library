@@ -36,6 +36,7 @@ Read from the repo-root `.env` (never committed, never logged).
 | `KOSHA_DEV` | `true` serves `/api/docs` and `/api/openapi.json` without signing in. Default `false`. |
 | `KOSHA_X_ACCESS_TOKEN`, `KOSHA_X_USER_ID` | Optional, for the official X API sync |
 | `VOYAGE_API_KEY` | Embeddings for semantic search. Without it search is keyword-only. |
+| `TYPESAFE_API_KEY` | TypeSafe Jev, for the `jev` and `score_labels` pipeline stages and `POST /api/jev/check` |
 
 Ports, page sizes, CORS origins, the app name and the defaults of user settings are constants in
 `kosha/config.py`.
@@ -63,7 +64,7 @@ thread (`kosha/sync/scheduler.py`); it calls X only when the setting is on.
 | Path | Contents |
 |---|---|
 | `kosha/config.py` | Constants and environment settings |
-| `kosha/models.py`, `alembic/` | Every table in DESIGN.md section 4, one migration |
+| `kosha/models.py`, `alembic/` | Every table in DESIGN.md section 4 |
 | `kosha/parsers/` | X GraphQL (`x_graphql.py`), official X API (`x_api.py`), LinkedIn. All return one shape (`common.py`). |
 | `kosha/ingest.py` | Store the envelope, parse, merge ("richer payload wins field by field") |
 | `kosha/items_query.py` | The basic list filters as SQL conditions, the stable order, and paging |
@@ -77,6 +78,11 @@ thread (`kosha/sync/scheduler.py`); it calls X only when the setting is on.
 | `kosha/search/index.py` | Maintains the text-search columns |
 | `kosha/search/suggest.py` | Autocomplete |
 | `kosha/summaries.py` | Rule-built summaries, and the empty slot for an LLM recipe |
+| `kosha/pipeline/` | The pipeline `query` engine: `parser.py` (stages, positions), `executor.py` (every stage, the response cap, the grammar text), `writes.py` (preview and confirm tokens, tag/role/state/list writes, undo snapshots) |
+| `kosha/jev.py` | Jev through `constella.jev`: the text an item's question reads, the answer cache, estimates, budgets, ledger rows |
+| `kosha/runs.py` | Label runs: a trial tag namespace per experiment, coverage and spend, compare, promote |
+| `kosha/add_item.py` | Add a URL or a text as an item (source `web`), with a guarded page fetch |
+| `kosha/mcp_server.py` | The MCP server: six tools at `/mcp` |
 
 ## Auth
 
@@ -117,6 +123,29 @@ is in `../docs/experiments/search_eval_2026-11-21.md`.
 - Without `q` and `sort` the route behaves as before. With `q`, the saved/archived scope comes from the query
   (`is:archived`, `include:archived`, `include:context`); other list filters sent alongside still apply.
 - Items the source gave no save order for now sort by the time Kosha stored them, among the rest.
+
+## Pipeline, Jev and MCP
+
+Grammar, write rules, the MCP connect command and the agent playbook are in `../docs/MCP.md`; the numbers from the
+real library are in `../docs/experiments/pipeline_smoke_2026-11-21.md`.
+
+| Route | What it does |
+|---|---|
+| `POST /api/query` `{q, confirm?, run?}` | Run a pipeline, e.g. `where from:a,b \| grep ~retriev \| semantic "..." \| head 200 \| jev "...?" >= 0.8 \| tag "AI/RAG"`. Answers `{text, n, stages: [{stage, in, out, usd, ms, note}], rows, spent_usd, set, confirm, batch_id}`. A write over 25 items answers with a preview and `confirm`; send the same `q` again with it. Errors are 422 `{detail: {message, position}}`. |
+| `POST /api/jev/check` `{q, mode, question, threshold, dry_run}` | `dry_run`: `{estimate_usd, n, cached}`, nothing spent. Otherwise `{snapshot_id, kept, n, spent_usd, cached, set}`; page through the kept items with `GET /api/items?q=…&snapshot_id=…` (each row's `score` is Jev's p). 402 when a budget would be passed. |
+| `POST /api/undo/{batch_id}` | Also reverses a pipeline write (tags, roles, state, list). |
+| `/mcp` | MCP over streamable HTTP, bearer token. Tools: `query`, `tags`, `edit_item`, `add_item`, `jobs`, `runs`. |
+
+- Jev reads the first 2,000 characters of an item's text, never the summary, and every call uses one request layout
+  (many items per request); both follow Constella's measurements, quoted at the top of `kosha/jev.py`.
+- Answers are cached in `jev_questions` / `jev_answers` by (question, item, text); a repeat costs nothing. Every call
+  is a `spend_ledger` row with what it would have cost uncached.
+- Budgets are the user settings `jev_run_budget_usd` (one call, or a label run without its own budget; default $0.50)
+  and `jev_monthly_budget_usd` (default $5).
+- A label run writes to its own tag namespace (`run-<id>`). The app's lists, counts and `is:untagged` read `main`
+  only, so a run never shows up there until it is promoted.
+- Constella (`constella @ git+https://github.com/sreenivasanac/constella@library-v2`) supplies the Jev client,
+  `group`, `shortlist`, `assign` and `tree_hints`.
 
 ## Captures
 

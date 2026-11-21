@@ -63,16 +63,24 @@ def create_admin(session: Session) -> User:
     return user
 
 
+def bearer_user(session: Session, header: str) -> User | None:
+    """The user an `Authorization: Bearer …` header belongs to, or None."""
+    if not header.lower().startswith("bearer "):
+        return None
+    token = session.scalar(select(ApiToken).where(ApiToken.token_hash == hash_token(header[7:].strip())))
+    if token is None:
+        return None
+    token.last_used_at = datetime.now(UTC)
+    return session.get(User, token.user_id)
+
+
 def current_user(request: Request, session: Session = Depends(get_session)) -> User:
     """Dependency for every protected route: a bearer token if one is sent,
     otherwise the session cookie."""
     user = None
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
-        token = session.scalar(select(ApiToken).where(ApiToken.token_hash == hash_token(header[7:].strip())))
-        if token:
-            token.last_used_at = datetime.now(UTC)
-            user = session.get(User, token.user_id)
+        user = bearer_user(session, header)
     elif request.session.get("uid"):
         user = session.get(User, request.session["uid"])
         if (user is not None and request.method not in ("GET", "HEAD", "OPTIONS")

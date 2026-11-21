@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import ColumnElement, exists, extract, func, select
 from sqlalchemy.orm import Session
 
+from kosha.config import DEFAULT_NAMESPACE
 from kosha.models import Item, ItemCollection, ItemTag, Tag
 
 # Newest saved first, by the save time as well as it is known. Items the source
@@ -60,7 +61,7 @@ def conditions(f: ItemFilters) -> list[ColumnElement[bool]]:
     if f.read is not None:
         where.append(Item.read_at.is_not(None) if f.read else Item.read_at.is_(None))
     if f.untagged is not None:
-        has_tag = exists().where(ItemTag.item_id == Item.id, ~ItemTag.removed_by_user)
+        has_tag = exists().where(ItemTag.item_id == Item.id, ~ItemTag.removed_by_user, ItemTag.namespace == DEFAULT_NAMESPACE)
         where.append(~has_tag if f.untagged else has_tag)
     if f.tag_id is not None:
         where.append(tagged_under(f.tag_id))

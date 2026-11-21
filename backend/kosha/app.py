@@ -1,24 +1,29 @@
 """The FastAPI application: REST under /api, media under /media, and the
 built web app at / when `web/dist` exists."""
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.routing import Route
 
 from kosha import auth, media
-from kosha.api import captures, items, lists, misc, removals, search, tags
+from kosha.api import captures, items, lists, misc, pipeline, removals, search, tags
 from kosha.config import (
     API_PREFIX,
     APP_NAME,
     APP_VERSION,
     CORS_ORIGINS,
     MAX_BODY_BYTES,
+    MCP_PATH,
     SESSION_COOKIE,
     SESSION_MAX_AGE_S,
     WEB_DIST_DIR,
     get_settings,
 )
+from kosha.mcp_server import McpEndpoint
 
 TOO_LARGE = "Request body too large"
 
@@ -59,7 +64,7 @@ def _serve_web_app(app: FastAPI) -> None:
 
     @app.get("/{path:path}", include_in_schema=False)
     def web_app(path: str):
-        if path.split("/", 1)[0] in (API_PREFIX.strip("/"), "media"):
+        if path.split("/", 1)[0] in (API_PREFIX.strip("/"), "media", MCP_PATH.strip("/")):
             raise HTTPException(status.HTTP_404_NOT_FOUND)
         file = (root / path).resolve()
         if path and file.is_relative_to(root) and file.is_file():
@@ -70,8 +75,15 @@ def _serve_web_app(app: FastAPI) -> None:
 def create_app() -> FastAPI:
     settings = get_settings()
     public_docs = settings.kosha_dev  # otherwise the docs need a signed-in user
+    mcp_endpoint = McpEndpoint()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        async with mcp_endpoint.session_manager.run():  # the MCP SDK's task group lives as long as the server
+            yield
+
     app = FastAPI(
-        title=APP_NAME, version=APP_VERSION, redoc_url=None,
+        title=APP_NAME, version=APP_VERSION, redoc_url=None, lifespan=lifespan,
         openapi_url=f"{API_PREFIX}/openapi.json" if public_docs else None,
         docs_url=f"{API_PREFIX}/docs" if public_docs else None,
     )
@@ -88,7 +100,7 @@ def create_app() -> FastAPI:
     api.include_router(auth.router)
     # Everything below needs a signed-in user or a bearer token.
     protected = [Depends(auth.current_user)]
-    for module in (captures, items, tags, misc, search, lists, removals):
+    for module in (captures, items, tags, misc, search, lists, removals, pipeline):
         api.include_router(module.router, dependencies=protected)
     if not public_docs:
         api.add_api_route("/openapi.json", lambda: app.openapi(), dependencies=protected, include_in_schema=False)
@@ -96,6 +108,7 @@ def create_app() -> FastAPI:
                           dependencies=protected, include_in_schema=False)
     app.include_router(api)
     app.include_router(media.router, dependencies=protected)
+    app.router.routes.append(Route(MCP_PATH, endpoint=mcp_endpoint))  # checks the bearer token itself
     if (WEB_DIST_DIR / "index.html").is_file():
         _serve_web_app(app)
     return app
