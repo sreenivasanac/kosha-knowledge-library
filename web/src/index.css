@@ -1,0 +1,180 @@
+@import '@fontsource/ibm-plex-sans/latin-400.css';
+@import '@fontsource/ibm-plex-sans/latin-500.css';
+@import '@fontsource/ibm-plex-sans/latin-600.css';
+@import 'tailwindcss';
+
+/* Colour tokens: cool paper and blue-black ink, an indigo for actions, and a
+   turmeric "ribbon" kept for one job only: marking the focused item. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --sunken: #eceef2;
+  --ink: #17202b;
+  --ink-2: #465160;
+  --ink-3: #667180;
+  --line: #dce0e6;
+  --accent: #2f3fb8;
+  --accent-soft: #e7eafb;
+  --mark: #d99a00;
+  --danger: #b3261e;
+  --ok: #1f7a4d;
+  --shadow: 0 1px 2px rgb(23 32 43 / 0.06), 0 8px 28px rgb(23 32 43 / 0.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1318;
+    --surface: #171c23;
+    --sunken: #0b0e12;
+    --ink: #e7eaee;
+    --ink-2: #b6bec9;
+    --ink-3: #8b95a2;
+    --line: #29313b;
+    --accent: #a3adff;
+    --accent-soft: #232a52;
+    --mark: #f0b429;
+    --danger: #ff8a80;
+    --ok: #6fd39c;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 32px rgb(0 0 0 / 0.5);
+  }
+}
+
+@theme inline {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-mark: var(--mark);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --shadow-pop: var(--shadow);
+}
+
+html {
+  color-scheme: light dark;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+body {
+  margin: 0;
+  min-height: 100dvh;
+}
+button,
+select,
+summary,
+[role='button'] {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+/* One focus ring everywhere, visible on both themes. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+::selection {
+  background: var(--accent-soft);
+}
+
+@layer components {
+  /* Keys in tooltips, the help overlay and menus. */
+  .kbd {
+    display: inline-block;
+    min-width: 1.5em;
+    padding: 0 0.35em;
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--ink-2);
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 2rem;
+    padding: 0 0.7rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 0.867rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    border-color: var(--ink-3);
+  }
+  .btn-primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--surface);
+  }
+  .btn-danger {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .btn-ghost {
+    border-color: transparent;
+    background: transparent;
+    color: var(--ink-2);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--sunken);
+    color: var(--ink);
+  }
+  .field {
+    height: 2rem;
+    padding: 0 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 0.867rem;
+  }
+  textarea.field {
+    height: auto;
+    padding: 0.5rem 0.6rem;
+    line-height: 1.5;
+  }
+  /* Loading placeholder: same box as the content it stands for, so nothing shifts. */
+  .skeleton {
+    border-radius: 6px;
+    background: var(--sunken);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  /* The focused item: turmeric ribbon on the left plus an outline. */
+  .focused {
+    outline: 2px solid var(--mark);
+    outline-offset: -1px;
+    box-shadow: inset 4px 0 0 var(--mark);
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
