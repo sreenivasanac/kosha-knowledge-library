@@ -97,7 +97,27 @@ thread (`kosha/sync/scheduler.py`); it calls X only when the setting is on.
 - **CSRF: a cookie-authenticated request that is not GET/HEAD/OPTIONS must send the header `X-Requested-With: kosha`**,
   or it gets 403. Requests with a bearer token are exempt, and so is `POST /api/auth/login`. The session cookie is
   `SameSite=Strict`.
-- Login is limited to 5 failed attempts a minute per client address (then 429).
+- Login is limited to 5 failed attempts a minute per client address (then 429). `kosha serve` believes
+  `X-Forwarded-For` from `127.0.0.1` only, so behind nginx on the same machine the address is the real client's.
+  The limiter is in memory and per process; add one in nginx as well:
+
+  ```nginx
+  # http { }
+  limit_req_zone $binary_remote_addr zone=kosha_login:10m rate=10r/m;
+  # server { }
+  location = /api/auth/login {
+      limit_req zone=kosha_login burst=5 nodelay;
+      proxy_set_header X-Forwarded-For $remote_addr;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_pass http://127.0.0.1:8000;
+  }
+  ```
+
+  Set the same two `proxy_set_header` lines on the main `location /` block.
+- `GET/POST/DELETE /api/tokens` need the session cookie; a bearer token gets 403, so a token cannot mint or revoke tokens.
+- A SQL statement run for a request (REST or MCP) is cancelled after 15 seconds (`STATEMENT_TIMEOUT_MS`); the CLI,
+  migrations and background jobs use a second connection pool without the limit (`kosha/db.py`).
+- `POST /api/removals/result` deletes only an item that is saved and archived (409 otherwise).
 - Request bodies over 20 MB are refused with 413.
 - `/api/docs` and `/api/openapi.json` need a signed-in user unless `KOSHA_DEV=true`.
 
@@ -138,14 +158,22 @@ real library are in `../docs/experiments/pipeline_smoke_2026-11-21.md`.
 | `POST /api/query` `{q, confirm?, run?}` | Run a pipeline, e.g. `where from:a,b \| grep ~retriev \| semantic "..." \| head 200 \| jev "...?" >= 0.8 \| tag "AI/RAG"`. Answers `{text, n, stages: [{stage, in, out, usd, ms, note}], rows, spent_usd, set, confirm, batch_id}`. A write over 25 items answers with a preview and `confirm`; send the same `q` again with it. Errors are 422 `{detail: {message, position}}`. |
 | `POST /api/jev/check` `{q, mode, question, threshold, dry_run}` | `dry_run`: `{estimate_usd, n, cached}`, nothing spent. Otherwise `{snapshot_id, kept, n, spent_usd, cached, set}`; page through the kept items with `GET /api/items?q=…&snapshot_id=…` (each row's `score` is Jev's p). 402 when a budget would be passed. |
 | `POST /api/undo/{batch_id}` | Also reverses a pipeline write (tags, roles, state, list). |
-| `/mcp` | MCP over streamable HTTP, bearer token. Tools: `query`, `tags`, `edit_item`, `add_item`, `jobs`, `runs`. |
+| `/mcp` | MCP over streamable HTTP, bearer token. Tools: `query`, `tags`, `edit_item`, `add_item`, `jobs`, `runs`. An agent cannot approve or reject tags; its changes to the owner's tags need a confirm token; every `tags` and `edit_item` change is an undo batch (`../docs/MCP.md`). |
 
 - Jev reads the first 2,000 characters of an item's text, never the summary, and every call uses one request layout
   (many items per request); both follow Constella's measurements, quoted at the top of `kosha/jev.py`.
 - Answers are cached in `jev_questions` / `jev_answers` by (question, item, text); a repeat costs nothing. Every call
   is a `spend_ledger` row with what it would have cost uncached.
-- Budgets are the user settings `jev_run_budget_usd` (one call, or a label run without its own budget; default $0.50)
-  and `jev_monthly_budget_usd` (default $5).
+- Budgets are the user settings `jev_run_budget_usd` (one call, inside a label run as well, and a run's total when it
+  was started without a budget; default $0.50), `jev_run_max_budget_usd` (the most any label run may spend, whatever
+  budget the agent asked for; default $2) and `jev_monthly_budget_usd` (default $5).
+- Check and spend are one step: under a per-user Postgres advisory lock the estimate is checked and written to
+  `spend_ledger` as a provisional row (`meta.provisional`), then corrected to the real cost after the call, or removed
+  when the call failed and nothing was billed. The LLM layer does the same against `llm_monthly_cap_usd`, holding
+  $0.05 for a chat completion (`COMPLETION_RESERVE_USD`) and the per-minute price for a transcription.
+- `q` is at most 4,000 characters. The Jev spend token is bound to the pipeline, the number of new questions and the
+  estimate; the promote token to the exact tags and (item, tag) pairs; `save view` onto an existing name with another
+  filter answers with a preview and a confirm token.
 - A label run writes to its own tag namespace (`run-<id>`). The app's lists, counts and `is:untagged` read `main`
   only, so a run never shows up there until it is promoted.
 - Constella (`constella @ git+https://github.com/sreenivasanac/constella@library-v2`) supplies the Jev client,
@@ -159,16 +187,16 @@ Measured on the real library: `../docs/experiments/ask_eval_2026-11-21.md`, `sum
 |---|---|
 | `POST /api/ask` `{question, max_steps?}` | An LLM answers from the library through read-only pipelines. `{answer, items, steps: [{pipeline, n, note}], spent: {llm_usd, jev_usd}, took_ms, model, tokens}`. The answer cites items as `[id]`; `items` are those ids in the order cited. |
 | `POST /api/ask/stream` | The same as server-sent events: `step` per pipeline, then `done` (the full answer) or `error`. |
-| `POST /api/media-text/estimate` `{item_ids?, all?}` | `{n_media, minutes, images, estimate_usd}` for the media of those items that has no text yet. |
-| `POST /api/media-text/start` `{item_ids?, all?}` | 202: queues them and starts the worker thread. One item id is what the `m` key sends. 402 when the estimate would pass the LLM cap. |
+| `POST /api/media-text/estimate` `{item_ids?, all?}` | `{n_media, minutes, images, unknown_duration, estimate_usd}` for the media of those items that has no text yet. `unknown_duration` recordings have no length from the source and are not in the estimate. |
+| `POST /api/media-text/start` `{item_ids?, all?, confirm_usd?}` | 202: queues them and starts the worker thread. One item id is what the `m` key sends. With `all`, or an estimate over $0.50 (`MEDIA_TEXT_CONFIRM_ABOVE_USD`), `confirm_usd` must be at or above the current estimate; otherwise 409 `{detail: {message, n_media, minutes, images, unknown_duration, estimate_usd}}` and nothing is queued. 402 when the estimate would pass the LLM cap. |
 | `GET /api/media-text/status` | `{counts: {none, queued, done, failed}, running, job, ffmpeg}`; `job.errors` gives the reason of each failure by media id. |
-| `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` | API tokens: name, created, last used. The secret is in the `POST` answer only (`token`). |
+| `GET/POST /api/tokens`, `DELETE /api/tokens/{id}` | API tokens: name, created, last used. The secret is in the `POST` answer only (`token`). Session cookie only: 403 with a bearer token. |
 | `GET /api/spend` | This month: `{month, total_usd, providers: [{provider, usd, calls}], caps: [{name, setting, cap_usd, spent_usd}]}` for `x`, `jev` and `llm`. |
 | `POST /api/sync` `{source: "x_api"}`, `GET /api/sync` | Start the official X API sync in the background (`disabled` when the setting is off; nothing is called); the last run of each sync from `sync_state`. |
 
 - Models are user settings, as LiteLLM names: `llm_ask_model` (default `openai/gpt-6.1-terra`), `llm_small_model` (`openai/gpt-6-luna`, image descriptions), `stt_model` (`openai/gpt-transcribe`). `llm_monthly_cap_usd` (default $5) stops every LLM and speech-to-text call for the month.
-- Ask: at most 6 tool calls, each result cut to about 1,200 tokens, 40,000 input tokens over the loop, $0.02 of Jev a question. Write stages are refused on the server. Bookmark text reaches the model inside `<library_data>` tags, which the system prompt declares untrusted.
-- Media text: a video's smallest mp4 is downloaded to a temporary folder (https, `MEDIA_ALLOWED_HOSTS`, 200 MB cap), ffmpeg cuts the sound track into mp3 pieces, each is transcribed. Without ffmpeg the mp4 is sent as it is when it is under 25 MB, otherwise the file fails with that reason. A video with no speech gets a description of its preview frame. Then the item's summary, content hash and search columns are refreshed.
+- Ask: at most 6 tool calls, each result cut to about 1,200 tokens, 40,000 input tokens over the loop, $0.02 of Jev a question. Write stages are refused on the server, and a set Ask saves (`as @name`, `groups`) is stored as `@ask.name`, so it cannot replace a set saved elsewhere. Bookmark text reaches the model inside `<library_data>` tags, which the system prompt declares untrusted.
+- Media text: a video's smallest mp4 is downloaded to a temporary folder (https, `MEDIA_ALLOWED_HOSTS`, 200 MB cap), ffmpeg cuts the sound track into mp3 pieces, each is transcribed. Without ffmpeg the mp4 is sent as it is when it is under 25 MB, otherwise the file fails with that reason. A recording whose length the source did not give is measured with ffmpeg before the cap is checked; when that is not possible the file fails with that reason and nothing is sent. A video with no speech gets a description of its preview frame. Then the item's summary, content hash and search columns are refreshed.
 - LinkedIn saved-posts captures: the parser reads the headline, line breaks, picture kind (photo, video cover, document cover, link preview, company logo) and link preview from the card, takes the post time from the activity id (the relative label is the fallback), and estimates the save time as a lower bound (`parse_saved_posts` in `kosha/parsers/linkedin.py`).
 
 ## Captures

@@ -1,10 +1,11 @@
 """Items: list, detail, state changes (single and bulk, with undo), hard delete."""
 import math
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
 from kosha.api.tags import attach_tag, detach_tag, get_item
@@ -47,6 +48,8 @@ def list_items(
     mode: str | None = Query(None, description=f"One of {MODES}. Default: hybrid when q has words, else filter"),
     sort: str | None = Query(None, description="A sort key, optionally with -asc or -desc; same as sort: in q"),
     snapshot_id: int | None = Query(None, description="From the first page of a ranked search, to page through it"),
+    rerank: Literal["none", "voyage", "jev"] = Query("none", description="Paid second stage on the top 50 of a ranked search"),
+    weak: bool = Query(False, description="Also show the weaker matches a ranked search leaves out (see weak_hidden)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, description=f"One of {PAGE_SIZES}"),
     user: User = Depends(current_user),
@@ -72,7 +75,7 @@ def list_items(
     sent = filters.model_copy(update={k: None for k in ("is_saved", "archived") if k not in filters.model_fields_set})
     try:
         found = search(session, user.id, q or "", mode=mode, sort=sort, page=page, page_size=page_size,
-                       snapshot_id=snapshot_id, extra_where=conditions(sent),
+                       snapshot_id=snapshot_id, rerank=rerank, weak=weak, extra_where=conditions(sent),
                        extra_key=sent.model_dump_json(exclude_none=True))
     except QueryError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.as_dict()) from None
@@ -85,7 +88,7 @@ def list_items(
     return {
         "items": rows, "page": page, "page_size": page_size, "total": found["total"],
         "pages": math.ceil(found["total"] / page_size),
-        **{k: found[k] for k in ("mode", "query", "snapshot_id", "refreshed", "notice", "took_ms")},
+        **{k: found[k] for k in ("mode", "query", "snapshot_id", "refreshed", "notice", "took_ms", "weak_hidden")},
     }
 
 
@@ -158,8 +161,27 @@ def undo_batch(session: Session, user_id: int, batch_id: int) -> None:
             starred=row["starred"], note=row["note"],
             read_at=datetime.fromisoformat(row["read_at"]) if row["read_at"] else None,
             archived_at=datetime.fromisoformat(row["archived_at"]) if row["archived_at"] else None,
+            # the MCP `edit_item` tool also replaces the summary
+            **({k: row[k] for k in ("summary", "summary_method", "summary_status")} if "summary" in row else {}),
         ))
     reindex(session, ids)  # notes are searchable
+    # An agent's change to the tag tree (MCP `tags`): tags it created go, and
+    # tags it renamed, moved, merged or deleted are put back as they were,
+    # parents first; their item rows follow below.
+    try:
+        if before.get("created_tags"):
+            session.execute(delete(Tag).where(Tag.user_id == user_id, Tag.id.in_(before["created_tags"])))
+        for row in sorted(before.get("tags", []), key=lambda r: r["path"].count(".")):
+            tag = session.get(Tag, row["id"])
+            if tag is None:
+                session.add(Tag(user_id=user_id, **row))
+            elif tag.user_id == user_id:
+                for column, value in row.items():
+                    setattr(tag, column, value)
+            session.flush()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot undo: a tag with the same name now exists in that place") from None
     if before["tag_ids"]:
         session.execute(delete(ItemTag).where(ItemTag.item_id.in_(ids), ItemTag.tag_id.in_(before["tag_ids"])))
         # Tags and items may have been deleted since; their rows are not restored.

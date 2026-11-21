@@ -29,6 +29,9 @@ PRESETS = {
     "tags": ("0", "1", ">1"), "recent": ("100", "500"),
 }
 COUNTED_ENUMS = ("is", "has", "type", "tagged-by", "tag-status")
+# A handle this long is a source's internal id (LinkedIn), not something to
+# show or type: `from:` then inserts the author's name instead.
+OPAQUE_HANDLE_CHARS = 30
 UNCOUNTED_VALUES = ("has:code",)  # a regex over every text (about 40 ms): offered without a count
 
 
@@ -118,7 +121,8 @@ def _values(ctx: _Context, key: str, typed: str) -> list[dict]:
     escaped = typed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     if key == "from":
         rows = ctx.grouped(Item.author_handle, escaped.lstrip("@"), name=Item.author_name)
-        return [_row(f"@{handle}", f"{name} (@{handle})" if name else f"@{handle}", "author", n) for handle, name, n in rows]
+        return [_row(_quote(name), name, "author", n) if name and len(handle) > OPAQUE_HANDLE_CHARS
+                else _row(f"@{handle}", f"{name} (@{handle})" if name else f"@{handle}", "author", n) for handle, name, n in rows]
     if key in ("domain", "site"):
         rows = ctx.grouped(ItemLink.domain, escaped, (ItemLink, ItemLink.item_id == Item.id))
         return [_row(domain, domain, "value", n) for domain, _, n in rows]

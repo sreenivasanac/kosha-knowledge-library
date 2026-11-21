@@ -184,3 +184,37 @@ def test_built_web_app_is_served_with_spa_fallback(user, tmp_path, monkeypatch):
     assert site.get("/api/nope").status_code == 404 and site.get("/media/nope").status_code == 401
     assert site.get("/api/health").status_code == 401  # the API is untouched
     assert "/tags/12" not in TestClient(app).get("/api/openapi.json").text
+
+
+def test_removal_result_only_deletes_archived_items(client, session, user):
+    item = Item(user_id=user.id, source="x", source_id="77", body="still wanted")
+    session.add(item)
+    session.commit()
+    assert client.post("/api/removals/result", json={"item_id": item.id, "status": "removed"}).status_code == 409
+    assert client.get(f"/api/items/{item.id}").status_code == 200
+    client.post("/api/items/bulk", json={"ids": [item.id], "archived": True})
+    assert client.post("/api/removals/result", json={"item_id": item.id, "status": "removed"}).json()["deleted"] is True
+
+
+def test_request_sessions_have_a_statement_timeout(user):
+    from sqlalchemy import text
+
+    from kosha.config import STATEMENT_TIMEOUT_MS
+    from kosha.db import RequestSession, SessionLocal
+
+    with RequestSession() as request, SessionLocal() as batch:
+        assert request.execute(text("SHOW statement_timeout")).scalar() == f"{STATEMENT_TIMEOUT_MS // 1000}s"
+        assert batch.execute(text("SHOW statement_timeout")).scalar() == "0"  # CLI and background jobs are not cut off
+
+
+def test_serve_trusts_forwarding_headers_from_this_machine_only(monkeypatch):
+    import uvicorn
+
+    from kosha import cli
+    from kosha.sync import scheduler
+
+    seen = {}
+    monkeypatch.setattr(scheduler, "start_scheduler", lambda: None)
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: seen.update(kwargs))
+    cli.serve(host="127.0.0.1", port=8000, reload=False)
+    assert seen["proxy_headers"] is True and seen["forwarded_allow_ips"] == "127.0.0.1"

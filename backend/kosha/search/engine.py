@@ -18,10 +18,10 @@ from sqlalchemy.orm import Session, aliased
 from kosha.items_query import fetch_page
 from kosha.models import Item, ItemEmbedding, ResultSet, SearchHistory
 from kosha.search.embeddings import DOC_MODEL, EmbeddingError, query_vector
+from kosha.search.query import Query, QueryError, Text, compile_filter, order_by, parse, parse_sort, text_condition, to_string, ts_config
 from kosha.search.rerank import STRONG_SCORE as RERANK_STRONG_SCORE
 from kosha.search.rerank import RerankError
 from kosha.search.rerank import rerank as rerank_ids
-from kosha.search.query import Query, QueryError, Text, compile_filter, order_by, parse, parse_sort, text_condition, to_string, ts_config
 from kosha.summaries import item_text
 
 # --- Tunables ---------------------------------------------------------------
@@ -38,17 +38,14 @@ WEIGHTS_DEFAULT = (1.0, 1.0)
 WEIGHTS_IDENTIFIER = (2.0, 1.0)  # one or two tokens, or something that looks like an identifier
 WEIGHTS_LONG = (1.0, 1.5)  # six words or more, unquoted
 LONG_QUERY_WORDS = 6
-# A semantic hit is kept when its cosine similarity is at least the floor and
-# within the margin of the best hit. Voyage similarities on this library run
-# from about 0.2 (unrelated) to 0.7; the cut that separates "related" from the
-# rest moves with the query, hence the margin.
-SEMANTIC_MIN_SIMILARITY = 0.30
-SEMANTIC_MARGIN = 0.15
+# The semantic ranker returns its nearest RANKER_TOP_N whatever their
+# similarity: a floor here emptied searches inside a narrow filter and cost a
+# third of recall@30. Which hits are good enough to show is STRONG_* below.
 # Keyword hits. Each top-level word weighs its rarity in the library (BM25's
 # idf); a row is a keyword hit when the words it contains carry at least this
 # share of the total weight. 1.0 is "every word" (AND). Keyword mode is always AND.
-KEYWORD_MIN_COVERAGE = 1.0
-COMMON_TERM_SHARE = 0.5  # a word in more than this share of items says nothing (stop words) and is ignored
+KEYWORD_MIN_COVERAGE = 0.35
+MIN_TERM_WEIGHT = 0.01  # a word in nearly every item still counts for this much
 # A word no item contains is tried as a prefix, then as a misspelling of the
 # library's own words (trigram similarity to the indexed words, author names
 # included), when it is at least this long.
@@ -58,20 +55,17 @@ FUZZY_MAX_WORDS = 3  # the closest words stand in for the misspelled one
 # Share of the keyword score given to "any of the words" next to "all of the
 # top-level words close together".
 ANY_WORD_WEIGHT = 0.1
-PHRASE_BOOST = 0.0  # added to the keyword score of a row that holds the words as one phrase
 TS_WEIGHTS = "{0.1, 0.2, 0.4, 1.0}"  # D, C, B, A
 TS_NORMALIZATION = 1  # divide the rank by 1 + log(document length)
-# Light tie-breakers on the fused score: score * (1 + weight * signal), signal in 0..1.
-ENGAGEMENT_WEIGHT = 0.0  # signal: log10(1 + likes) / 6
-RECENCY_WEIGHT = 0.0  # signal: 1 at today, 0 at RECENCY_SPAN_DAYS ago or older
-RECENCY_SPAN_DAYS = 1500
+# A light tie-breaker on the fused score: score * (1 + weight * log10(1 + likes) / 6).
+ENGAGEMENT_WEIGHT = 0.1
 # "Few good results": a result is strong when it is a keyword hit with at
-# least this coverage, or its similarity is at least STRONG_SIMILARITY, or
+# least this coverage, or its similarity is at least STRONG_SIMILARITY and
 # within STRONG_MARGIN of the best hit. The search bar shows the strong ones
 # and says how many weaker ones it left out.
-STRONG_COVERAGE = 1.0
-STRONG_SIMILARITY = 0.45
-STRONG_MARGIN = 0.08
+STRONG_COVERAGE = 0.6
+STRONG_SIMILARITY = 0.40
+STRONG_MARGIN = 0.20
 SNIPPET_SOURCE_CHARS = 5000
 SNIPPET_FALLBACK_CHARS = 160
 # Control characters mark the hits so the text can be HTML-escaped before the
@@ -128,7 +122,7 @@ def _closest_words(session: Session, user_id: int, word: str) -> list[str]:
 def weighted_terms(session: Session, user_id: int, query: Query) -> tuple[list[tuple[ColumnElement[bool], float]], bool]:
     """The top-level words as (condition, weight). The weight is the word's
     rarity in the library, so "pgvector" counts for more than "building".
-    Stop words and words in most items are left out. A word nothing contains
+    Stop words are left out. A word nothing contains
     is replaced by its prefix match or, failing that, the closest indexed words.
     Returns the terms and whether any was replaced."""
     atoms = list(query.rank_atoms)
@@ -143,7 +137,7 @@ def weighted_terms(session: Session, user_id: int, query: Query) -> tuple[list[t
     # numnode is 0 for a term made of stop words only: it is left out below
     stops = [func.numnode(func.plainto_tsquery(ts_config("english"), a.value)) for a in atoms]
     total, *rest = counts([true(), *conds], *stops)
-    dfs = [total if nodes == 0 else df for df, nodes in zip(rest[:len(atoms)], rest[len(atoms):])]
+    dfs = [df if nodes else total for df, nodes in zip(rest[:len(atoms)], rest[len(atoms):])]
     replaced = False
     for i, df in enumerate(dfs):
         word = atoms[i].value
@@ -157,8 +151,8 @@ def weighted_terms(session: Session, user_id: int, query: Query) -> tuple[list[t
             if found:
                 conds[i], dfs[i], replaced = cond, found, True
                 break
-    terms = [(cond, math.log(1 + (total - df + 0.5) / (df + 0.5)))
-             for cond, df in zip(conds, dfs) if df <= total * COMMON_TERM_SHARE]
+    terms = [(cond, max(MIN_TERM_WEIGHT, math.log(1 + (total - df + 0.5) / (df + 0.5))))
+             for cond, df, nodes in zip(conds, dfs, rest[len(atoms):]) if nodes]
     return terms, replaced
 
 
@@ -180,9 +174,6 @@ def keyword_rank(session: Session, where: list[ColumnElement[bool]], query: Quer
             rank = rank + ANY_WORD_WEIGHT * score(_or_tsquery(query, config))
             if all_words:
                 rank = rank + score(func.websearch_to_tsquery(ts_config(config), all_words))
-    if PHRASE_BOOST and all_words and len(query.rank_atoms) > 1:
-        phrase = func.phraseto_tsquery(ts_config("english"), " ".join(a.value for a in query.rank_atoms))
-        rank = rank + case((Item.tsv.op("@@")(phrase), PHRASE_BOOST), else_=0.0)
     total = sum(w for _, w in terms)
     if min_coverage >= 1:  # AND: lets Postgres use the word index for every term
         candidates, coverage = and_(*(c for c, _ in terms)), literal(1.0)
@@ -196,15 +187,13 @@ def keyword_rank(session: Session, where: list[ColumnElement[bool]], query: Quer
 
 def semantic_rank(session: Session, where: list[ColumnElement[bool]], vector, exclude_id: int | None = None) -> list[tuple[int, float]]:
     """(id, cosine similarity) of the exact nearest neighbours inside the
-    filtered set (no ANN index), cut where similarity falls too far below the
-    best hit."""
+    filtered set (no ANN index)."""
     distance = ItemEmbedding.vector.cosine_distance(vector)
     stmt = (select(Item.id, distance).join(ItemEmbedding, (ItemEmbedding.item_id == Item.id) & (ItemEmbedding.model == DOC_MODEL))
-            .where(*where, distance <= 1 - SEMANTIC_MIN_SIMILARITY).order_by(distance, Item.id).limit(RANKER_TOP_N))
+            .where(*where).order_by(distance, Item.id).limit(RANKER_TOP_N))
     if exclude_id is not None:
         stmt = stmt.where(Item.id != exclude_id)
-    rows = session.execute(stmt).all()
-    return [(item_id, 1 - d) for item_id, d in rows if d <= rows[0][1] + SEMANTIC_MARGIN]
+    return [(item_id, 1 - d) for item_id, d in session.execute(stmt)]
 
 
 def _similar_vector(session: Session, user_id: int, similar: str):
@@ -223,16 +212,11 @@ def _similar_vector(session: Session, user_id: int, similar: str):
 
 
 def _tie_break(session: Session, fused: list[tuple[int, float]]) -> list[tuple[int, float]]:
-    """Nudge the fused scores by engagement and recency, so that of two
-    equally relevant rows the better-liked or newer one comes first."""
-    rows = session.execute(select(Item.id, Item.likes, Item.posted_at).where(Item.id.in_([i for i, _ in fused]))).all()
-    now = datetime.now(UTC)
-    signal = {}
-    for item_id, likes, posted in rows:
-        age = (now - posted).days if posted else RECENCY_SPAN_DAYS
-        signal[item_id] = (ENGAGEMENT_WEIGHT * min(1.0, math.log10(1 + (likes or 0)) / 6)
-                           + RECENCY_WEIGHT * max(0.0, 1 - age / RECENCY_SPAN_DAYS))
-    return sorted(((i, s * (1 + signal.get(i, 0.0))) for i, s in fused), key=lambda pair: (-pair[1], pair[0]))
+    """Nudge the fused scores by engagement, so that of two equally relevant
+    rows the better-liked one comes first."""
+    likes = dict(session.execute(select(Item.id, Item.likes).where(Item.id.in_([i for i, _ in fused]))).all())
+    boost = lambda i: 1 + ENGAGEMENT_WEIGHT * min(1.0, math.log10(1 + (likes.get(i) or 0)) / 6)  # noqa: E731
+    return sorted(((i, s * boost(i)) for i, s in fused), key=lambda pair: (-pair[1], pair[0]))
 
 
 def rank_all(session: Session, user_id: int, query: Query, mode: str, extra_where: list) -> tuple[list[int], list[float], str | None, set[int]]:
@@ -264,18 +248,16 @@ def rank_all(session: Session, user_id: int, query: Query, mode: str, extra_wher
             semantic_hits = semantic_hits or similar_hits
             rankings.append(([i for i, _ in similar_hits], w_sem))
     fused = rrf(rankings)[:SNAPSHOT_MAX_ITEMS]
-    if fused and (ENGAGEMENT_WEIGHT or RECENCY_WEIGHT):
+    if fused and ENGAGEMENT_WEIGHT:
         fused = _tie_break(session, fused)
     exact = any(c >= 1 for _, c in keyword_hits)
     if fuzzy and keyword_hits:
         notice = "fuzzy_match"  # a word was matched as a prefix or a misspelling
     elif mode == "hybrid" and query.rank_text and not exact and fused:
         notice = "no_exact_matches"  # "showing related items"
-    if not query.rank_text:  # `similar:` alone: a list of neighbours, nothing to call weak
-        return [i for i, _ in fused], [s for _, s in fused], notice, {i for i, _ in fused}
     best = semantic_hits[0][1] if semantic_hits else 0.0
     strong = {i for i, c in keyword_hits if c >= STRONG_COVERAGE}
-    strong |= {i for i, s in semantic_hits if s >= min(STRONG_SIMILARITY, best - STRONG_MARGIN + 1e-9) and s >= best - SEMANTIC_MARGIN}
+    strong |= {i for i, s in semantic_hits if s >= STRONG_SIMILARITY and s >= best - STRONG_MARGIN}
     return [i for i, _ in fused], [s for _, s in fused], notice, strong
 
 

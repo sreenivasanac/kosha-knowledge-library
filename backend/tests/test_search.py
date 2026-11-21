@@ -219,12 +219,12 @@ def test_modes_and_ranking(session, user, library, monkeypatch):
     assert ids(semantic) == [library["repo"], library["video"]]  # nearest first; unrelated ones are cut
     hybrid = search(session, user.id, "retrieval")
     assert hybrid["mode"] == "hybrid" and set(ids(hybrid)) == words | {library["repo"]}
-    assert ids(hybrid)[0] == library["video"]  # the only item both rankers return
+    assert ids(hybrid).index(library["video"]) < ids(hybrid).index(library["repo"])  # in both rankers beats semantic only
     assert all(hybrid["scores"][i] > 0 for i in ids(hybrid)) and "<mark>" in hybrid["snippets"][library["pg"]]
     assert "<mark>" not in hybrid["snippets"][library["repo"]]  # a semantic-only hit shows its opening
 
     # Qualifiers filter first: both rankers stay inside the set.
-    assert ids(search(session, user.id, "retrieval from:bob")) == [library["video"], library["rag"]]
+    assert set(ids(search(session, user.id, "retrieval from:bob"))) == {library["video"], library["rag"]}
     related = search(session, user.id, "zebra from:cy")
     assert ids(related) == [library["repo"]] and related["notice"] == "no_exact_matches"
     similar = search(session, user.id, f"similar:{library['repo']}")
@@ -373,3 +373,86 @@ def test_summaries(session, user, library):
     assert summarize(session, user.id)["changed"] == 0 and session.get(Item, library["repo"]).summary == "Written by hand"
     # The summary is searchable.
     assert session.scalar(select(func.count()).select_from(Item).where(*compile_filter(session, user.id, parse("in:summary (hand)")))) == 1
+
+
+def test_partial_matches_weak_cut_and_misspellings(session, user, library, monkeypatch):
+    # Every item is far from the query vector, so only the keyword side can make a result strong.
+    for name in ("pg", "rag", "repo"):
+        session.add(ItemEmbedding(item_id=library[name], model=DOC_MODEL, content_hash="h", vector=axis(5)))
+    session.commit()
+    monkeypatch.setattr(engine, "query_vector", lambda session, user_id, text: axis(0))
+    ids = lambda result: [i.id for i in result["items"]]  # noqa: E731
+
+    # Three of four words make a strong keyword hit; the rest are weak and hidden until asked for.
+    shown = search(session, user.id, "pgvector HNSW indexes zebra")
+    assert ids(shown) == [library["pg"]] and shown["notice"] == "no_exact_matches" and shown["weak_hidden"] == 2
+    everything = search(session, user.id, "pgvector HNSW indexes zebra", weak=True)
+    assert set(ids(everything)) == {library["pg"], library["rag"], library["repo"]} and everything["weak_hidden"] == 0
+    assert ids(everything)[0] == library["pg"]
+    # Keyword mode stays AND.
+    assert search(session, user.id, "pgvector HNSW indexes zebra", mode="keyword")["total"] == 0
+    # engine.rank (what a pipeline stage calls) returns the weak ones too, also inside a narrow filter.
+    assert len(engine.rank(session, user.id, parse("zebra from:cy"), "hybrid", [])[0]) == 1
+
+    # A misspelled word falls back to the closest indexed word; an unfinished one to its prefix.
+    typo = search(session, user.id, "pgvektor", mode="keyword")
+    assert ids(typo) == [library["pg"]] and typo["notice"] == "fuzzy_match"
+    assert ids(search(session, user.id, "pgvec", mode="keyword")) == [library["pg"]]
+    # A stop word neither matches nor blocks.
+    assert ids(search(session, user.id, "the pgvector", mode="keyword")) == [library["pg"]]
+
+
+def test_rerank_reorders_the_head_and_falls_back(session, user, library, monkeypatch):
+    monkeypatch.setattr(engine, "query_vector", lambda session, user_id, text: axis(0))
+    ids = lambda result: [i.id for i in result["items"]]  # noqa: E731
+    plain = ids(search(session, user.id, "retrieval"))
+    calls = []
+
+    def fake(session, user_id, text, item_ids, method):
+        calls.append((text, method))
+        return item_ids[::-1], {i: (0.9 if i == item_ids[-1] else 0.1) for i in item_ids}
+
+    monkeypatch.setattr(engine, "rerank_ids", fake)
+    reranked = search(session, user.id, "retrieval", rerank="jev")
+    assert ids(reranked) == [plain[-1]] and reranked["weak_hidden"] == len(plain) - 1 and calls == [("retrieval", "jev")]
+    assert ids(search(session, user.id, "retrieval", rerank="jev", weak=True)) == plain[::-1]
+
+    def broken(*args):
+        raise engine.RerankError("no key")
+
+    monkeypatch.setattr(engine, "rerank_ids", broken)
+    fallback = search(session, user.id, "retrieval", rerank="voyage")
+    assert ids(fallback) == plain and fallback["notice"] == "rerank_unavailable"
+
+
+def test_qualifier_additions(session, user, library):
+    session.info["library"] = library
+    assert found(session, user, "has:code") == {"repo"}  # a link to a code host
+    session.get(Item, library["quoting"]).body = "run `pip install kosha` first"
+    reindex(session, [library["quoting"]])
+    session.add(ItemLink(item_id=library["video"], url="https://youtu.be/abc", domain="youtu.be"))
+    session.commit()
+    assert found(session, user, "has:code") == {"repo", "quoting"}
+    assert found(session, user, "domain:youtube.com") == {"video"}  # the short host of the same site
+    # from: without @ matches part of a handle or name, then a near spelling; @handle stays exact.
+    assert found(session, user, "from:bo") == {"rag", "video"} and found(session, user, "from:@bo") == set()
+    session.get(Item, library["long"]).author_name = "Dee Hamilton"
+    session.commit()
+    assert found(session, user, "from:hamilton") == {"long"} and found(session, user, "from:hamiltn") == {"long"}
+    assert found(session, user, "-from:bob,cy") == {"pg", "long"}
+    assert found(session, user, "from:nobody") == set()
+    # Date words.
+    session.get(Item, library["pg"]).posted_at = NOW
+    session.commit()
+    assert found(session, user, "posted:today") == {"pg"} and found(session, user, "posted:thisyear") >= {"pg"}
+    assert found(session, user, "posted:lastyear..today") >= {"pg", "rag"} or NOW.month == 1
+    assert "today" in [s["insert"] for s in suggest(session, user.id, "saved:")["suggestions"]]
+
+
+def test_embedded_text_includes_media_extracts(session, user, library):
+    from kosha.search import embeddings
+
+    rows = {r.id: r for r in session.execute(embeddings.DOCS_SQL, {
+        "user_id": user.id, "model": DOC_MODEL, "body_max": embeddings.BODY_MAX_CHARS, "media_max": embeddings.MEDIA_MAX_CHARS})}
+    assert embeddings.document_text(rows[library["video"]]).endswith("Media: we cache the prompt prefix")
+    assert "Media:" not in embeddings.document_text(rows[library["pg"]])

@@ -149,7 +149,8 @@ class ItemPage(BaseModel):
     # A ranked result is a stored snapshot; send this back to page through it.
     snapshot_id: int | None = None
     refreshed: bool = False  # the snapshot sent had expired and the search ran again
-    notice: str | None = None  # no_exact_matches | semantic_unavailable
+    notice: str | None = None  # no_exact_matches | fuzzy_match | semantic_unavailable | rerank_unavailable
+    weak_hidden: int = 0  # weaker matches left out of a ranked result; `weak=true` shows them
     took_ms: float | None = None
 
 

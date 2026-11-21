@@ -23,6 +23,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from kosha.config import get_settings
+from kosha.db import lock_spend
 from kosha.models import JevAnswer, JevQuestion, LabelRun, SpendLedger
 from kosha.prefs import load_settings
 
@@ -155,9 +156,17 @@ def run_spend(session: Session, user_id: int, run_id: int) -> float:
         SpendLedger.user_id == user_id, SpendLedger.meta["run_id"].as_integer() == run_id)))
 
 
+def run_budget(settings: dict, asked: float | None) -> float:
+    """What a label run may spend in total: the budget it was started with
+    (the per-call budget when none was given), never more than the owner's
+    `jev_run_max_budget_usd`. The agent picks the first number, the owner the cap."""
+    return min(asked or settings["jev_run_budget_usd"], settings["jev_run_max_budget_usd"])
+
+
 def check_budget(session: Session, user_id: int, usd: float, run: LabelRun | None = None) -> None:
-    """Refuse a call that would pass a budget. A label run has its own budget
-    (set when it started); a call outside a run may spend `jev_run_budget_usd`."""
+    """Refuse a call that would pass a budget: Ask's allowance, the month, the
+    per-call budget `jev_run_budget_usd` (inside a label run as well), and the
+    run's own budget (`run_budget`)."""
     allowance = call_allowance.get()
     if allowance is not None and usd > allowance:
         raise BudgetError(f"est ${usd:.4f} is over what this question may still spend on Jev (${allowance:.4f}); "
@@ -167,29 +176,57 @@ def check_budget(session: Session, user_id: int, usd: float, run: LabelRun | Non
     if spent + usd > settings["jev_monthly_budget_usd"]:
         raise BudgetError(f"est ${usd:.4f} would pass the monthly Jev budget "
                           f"(${spent:.4f} of ${settings['jev_monthly_budget_usd']:.2f} spent)")
+    if usd > settings["jev_run_budget_usd"]:
+        raise BudgetError(f"est ${usd:.4f} is over the per-call Jev budget of ${settings['jev_run_budget_usd']:.2f} "
+                          "(setting jev_run_budget_usd); narrow the set first")
     if run is not None:
-        budget = (run.params or {}).get("budget_usd", settings["jev_run_budget_usd"])
+        budget = run_budget(settings, (run.params or {}).get("budget_usd"))
         used = run_spend(session, user_id, run.id)
         if used + usd > budget:
             raise BudgetError(f"est ${usd:.4f} would pass run {run.id}'s budget (${used:.4f} of ${budget:.2f} spent)")
-    elif usd > settings["jev_run_budget_usd"]:
-        raise BudgetError(f"est ${usd:.4f} is over the per-call Jev budget of ${settings['jev_run_budget_usd']:.2f} "
-                          "(setting jev_run_budget_usd); narrow the set first")
 
 
-def ask(session: Session, user_id: int, pairs: list, operation: str, run: LabelRun | None = None) -> tuple[list[Answer], Spend]:
+def ask(session: Session, user_id: int, pairs: list, operation: str, run: LabelRun | None = None,
+        estimate_usd: float | None = None) -> tuple[list[Answer], Spend]:
     """Answer every (Question, item id, text) pair, asking Jev only what the
     cache lacks, and write one ledger row. The row also records what the call
     would have cost with an empty cache, so two strategies can be compared
-    fairly when the second one benefits from the first one's answers."""
+    fairly when the second one benefits from the first one's answers.
+
+    Budgets: under the user's spend lock the estimate is checked
+    (`check_budget`, raising BudgetError with nothing spent) and written as a
+    provisional ledger row, committed before Jev is called, so calls running
+    at the same time count each other. Afterwards the row becomes what was
+    really paid; when Jev fails midway it becomes `<operation>_failed` with
+    the part that was billed."""
     client = get_client()
     cache = _cache(session, user_id, pairs, client.model)
     uncached_usd = cj.estimate(pairs, JEV_LAYOUT).usd if pairs else 0.0
-    answers, spend = cj.ask_cached(client, pairs, cache, by=JEV_LAYOUT)
-    session.add(SpendLedger(
-        user_id=user_id, provider=PROVIDER, operation=operation, units=spend.input_tokens,
-        amount_usd=Decimal(f"{spend.usd:.6f}"),
-        meta={"model": client.model, "unit": "tokens", "requests": spend.requests, "asked": spend.asked,
-              "cached": spend.cached, "uncached_usd": round(uncached_usd, 6), **({"run_id": run.id} if run else {})}))
-    session.commit()
+    if estimate_usd is None:
+        estimate_usd = estimate(session, user_id, pairs).usd
+    lock_spend(session, user_id)
+    check_budget(session, user_id, estimate_usd, run)
+    row = SpendLedger(user_id=user_id, provider=PROVIDER, operation=operation, units=0, amount_usd=Decimal(f"{estimate_usd:.6f}"),
+                      meta={"model": client.model, "unit": "tokens", "provisional": True, **({"run_id": run.id} if run else {})})
+    session.add(row)
+    session.commit()  # ends the transaction, which releases the lock
+
+    def settle(spend: Spend, name: str) -> None:
+        failed = name != operation
+        row.operation, row.units, row.amount_usd = name, spend.input_tokens, Decimal(f"{spend.usd:.6f}")
+        row.meta = {"model": client.model, "unit": "tokens", "requests": spend.requests, "asked": spend.asked, "cached": spend.cached,
+                    "uncached_usd": round(spend.usd if failed else uncached_usd, 6), **({"run_id": run.id} if run else {})}
+        if failed and not spend.usd:
+            session.delete(row)  # nothing was billed: the reservation goes
+        session.commit()
+
+    try:
+        answers, spend = cj.ask_cached(client, pairs, cache, by=JEV_LAYOUT)
+    except BaseException as exc:
+        # Requests that got through before the failure were billed and their answers are cached.
+        session.rollback()
+        partial = getattr(exc, "partial", None)
+        settle(partial[1] if partial else Spend(), f"{operation}_failed")
+        raise
+    settle(spend, operation)
     return answers, spend

@@ -20,8 +20,10 @@ RERANK_TOP_N = 50  # only the head is reranked; what follows keeps its order
 VOYAGE_RERANK_URL = "https://api.voyageai.com/v1/rerank"
 VOYAGE_RERANK_MODEL = "rerank-3"
 VOYAGE_TIMEOUT_S = 30
-# A reranked item counts as a strong match (see engine.STRONG_*) at or above this score.
-STRONG_SCORE = {"voyage": 0.5, "jev": 0.5}
+# A reranked item counts as a strong match (see engine.STRONG_*) at or above this
+# score. Measured: at these values a search for something the library does not
+# hold shows about one result, and precision@10 is 0.94 to 0.95.
+STRONG_SCORE = {"voyage": 0.4, "jev": 0.2}
 # Jev reads literally: the question says what counts as a yes (docs/MCP.md, "Jev").
 JEV_QUESTION = ('Someone is searching their saved posts for: "{query}". Is this post a good result for that search? '
                 "Answer yes only if the post is about that specific subject or would directly help with it; "

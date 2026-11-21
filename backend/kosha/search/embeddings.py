@@ -26,6 +26,7 @@ PRICE_PER_M_TOKENS_USD = {"voyage-4-large": 0.12, "voyage-4": 0.06, "voyage-4-li
                           # rerankers (kosha.search.rerank): tokens = query tokens x documents + document tokens
                           "rerank-3": 0.05, "rerank-3-lite": 0.02}  # https://docs.voyageai.com/docs/pricing.md
 BODY_MAX_CHARS = 6000
+MEDIA_MAX_CHARS = 2000  # of the transcripts and image descriptions together
 # voyage-4-large takes 1,000 texts and 120K tokens a request. Budgeted in
 # characters (about 3 per token at worst) to stay well inside the token limit.
 BATCH_MAX_ITEMS = 128
@@ -36,7 +37,8 @@ TIMEOUT_S = 120
 QUERY_CACHE_SIZE = 256
 PROVIDER = "voyage"
 
-# The parts of the embedded text (SEARCH_DESIGN.md C.3). Author, tags and the
+# The parts of the embedded text (SEARCH_DESIGN.md C.3), plus the first part of
+# the media extracts so a video or image post is found by what it shows. Author, tags and the
 # note are left out on purpose: they are qualifiers, and embedding the author
 # would make "similar" mean "same author".
 DOCS_SQL = text("""
@@ -46,6 +48,8 @@ SELECT i.id, i.title, left(i.body, :body_max) AS body, i.summary, i.summary_meth
     WHERE r.from_item_id = i.id AND r.relation = 'quotes') AS quoted,
   (SELECT string_agg(concat_ws(': ', l.title, l.description), E'\\n' ORDER BY l.position)
      FROM item_links l WHERE l.item_id = i.id AND l.title IS NOT NULL) AS links,
+  (SELECT left(string_agg(concat_ws(' ', m.alt_text, m.extract_text), E'\n' ORDER BY m.position), :media_max)
+     FROM item_media m WHERE m.item_id = i.id AND (m.alt_text IS NOT NULL OR m.extract_text IS NOT NULL)) AS media,
   e.content_hash AS embedded_hash
 FROM items i
 LEFT JOIN item_embeddings e ON e.item_id = i.id AND e.model = :model
@@ -59,13 +63,15 @@ class EmbeddingError(RuntimeError):
 
 
 def document_text(row) -> str:
-    """Title, body, quoted post, link titles and (only when it adds something
-    the body does not say) the summary."""
+    """Title, body, quoted post, link titles, the start of the media extracts
+    and (only when it adds something the body does not say) the summary."""
     parts = [row.title, row.body]
     if row.quoted:
         parts.append(f"Quoted: {row.quoted}")
     if row.links:
         parts.append(f"Links: {row.links}")
+    if row.media:
+        parts.append(f"Media: {row.media}")
     if row.summary and row.summary_method not in RULE_METHODS:
         parts.append(f"Summary: {row.summary}")
     return "\n".join(p.strip() for p in parts if p and p.strip())
@@ -112,7 +118,7 @@ def embed_items(session: Session, user_id: int, limit: int | None = None, echo=l
     batch is committed with its ledger row, so an interrupted run resumes
     where it stopped and never pays twice."""
     todo = []
-    rows = session.execute(DOCS_SQL, {"user_id": user_id, "model": DOC_MODEL, "body_max": BODY_MAX_CHARS}).all()
+    rows = session.execute(DOCS_SQL, {"user_id": user_id, "model": DOC_MODEL, "body_max": BODY_MAX_CHARS, "media_max": MEDIA_MAX_CHARS}).all()
     for row in rows:
         doc = document_text(row)
         digest = hashlib.sha256(doc.encode()).hexdigest()

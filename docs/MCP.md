@@ -20,13 +20,15 @@ claude mcp add --transport http kosha http://127.0.0.1:8000/mcp --header "Author
 | Tool | Arguments | What it does |
 |---|---|---|
 | `query` | `pipeline`, `confirm?`, `run?` | Runs a pipeline: filter, search, judge with Jev, count, show, bulk-write with preview. `pipeline: "help"` returns the grammar. |
-| `tags` | `operations?`, `run?` | No operations: the tree with counts, status and definitions. Operations, applied in order: `create`, `rename`, `describe`, `move`, `merge`, `approve`, `reject`, `delete`. |
-| `edit_item` | `id`, then any of `note`, `summary`, `starred`, `read`, `archived`, `primary_tag`, `secondary_tag` | Changes one item. |
+| `tags` | `operations?`, `run?` | No operations: the tree with counts, status and definitions. Operations, applied in order: `create`, `rename`, `describe`, `move`, `merge`, `delete`. Each returns a `batch` id to undo. See "Tag tree changes" below. |
+| `edit_item` | `id`, then any of `note`, `summary`, `starred`, `read`, `archived`, `primary_tag`, `secondary_tag` | Changes one item. The reply ends with `batch=<id>`: `runs` undo puts back the note, summary, state and tags it replaced. |
 | `add_item` | `url` or `text`, `title?`, `note?`, `tags?` | Saves a new item with source `web`. For a URL, Kosha reads the page's title and description itself (https, public addresses only, 1 MB, redirects checked hop by hop). |
 | `jobs` | `action`: `status`, `summarize`, `embed`, `sync` | Counts of items without a summary or an embedding, items waiting for removal at the source, last sync; starts the summary, embedding and X sync jobs. |
-| `runs` | `action`: `start`, `status`, `close`, `compare`, `promote`, `undo`, `list` | Label runs: a trial tag tree per experiment, coverage and spend, comparison, promotion into the real tree, and undo of any write batch. |
+| `runs` | `action`: `start`, `status`, `close`, `compare`, `promote`, `undo`, `list` | Label runs: a trial tag tree per experiment, coverage and spend, comparison, promotion into the real tree, and undo of any write batch (from `query`, `tags` or `edit_item`). `start` takes `budget_usd`; what the run gets is never above the owner's setting `jev_run_max_budget_usd` ($2), and the reply says the figure. |
 
-Not in this build: an `approve` scope on tokens (any valid token can approve a tag), media-text jobs, and running a removal at the source from `jobs` (it reports how many are waiting; the extension does the removal).
+An agent cannot approve or reject a tag: the owner does that in the web app. A bearer token cannot create, list or delete API tokens either (`/api/tokens` needs the web app's session).
+
+Not in this build: media-text jobs, and running a removal at the source from `jobs` (it reports how many are waiting; the extension does the removal).
 
 ## Pipeline grammar
 
@@ -75,14 +77,16 @@ After a Jev stage, the attached answer can be tested by its name: `where p:>=0.9
 | `roles auto` | Among agent-attached tags of each item: highest confidence primary, next secondary, rest other; a tag and its ancestor never both count. |
 | `star`, `unstar`, `read`, `unread`, `archive`, `unarchive` | Item state. |
 | `list "name"` | Appends the set to a hand-made list (created if missing). A list does not expire. |
-| `save view "name"` | Saves `where <filter> [\| sort key]` as a saved view. |
+| `save view "name"` | Saves `where <filter> [\| sort key]` as a saved view. A name that already holds another filter is not replaced: the reply is `PREVIEW` with both filters and a confirm token. |
 
 ### Jev
 
 - Jev reads the first 2,000 characters of the item's text (title, body, quoted post, link titles, media extracts), not the summary: a rule-built summary lost up to 21 of 33 true yeses in Constella's measurements.
 - Jev reads literally. Ask a full question with one head concept and then examples: "Is this post about <concept>, for example <things>?" A question that joins two head nouns with "or", says "mainly", or adds a "not …" clause scores nearly everything between 0.5 and 0.8 (`experiments/labeling_2026-11-21.md` section 4). On the real library the fragment `"about RAG / retrieval-augmented generation?"` put 91 of 106 items between 0.5 and 0.8 and none at 0.9; the spelled-out question put 52 at 0.9 or above.
 - Answers are cached by (question, item, text). The same question again costs nothing; a reworded question or a changed text is asked again.
-- Before spending, the stage estimates. More than 2,000 new questions returns `needs_confirm est=$…` and a confirm token. A call that would pass the per-call budget (`jev_run_budget_usd`, $0.50), the run's budget or the monthly budget (`jev_monthly_budget_usd`, $5) is refused with nothing spent.
+- Before spending, the stage estimates. More than 2,000 new questions returns `needs_confirm est=$…` and a confirm token, bound to the pipeline, the number of new questions and the estimate shown: if the set or the cache changed, you get a new one. A call that would pass the per-call budget (`jev_run_budget_usd`, $0.50; it applies inside a label run too), the run's budget or the monthly budget (`jev_monthly_budget_usd`, $5) is refused with nothing spent.
+- A run's budget is the `budget_usd` it was started with, or the per-call budget when none was given, and never more than `jev_run_max_budget_usd` ($2, set by the owner).
+- The estimate is written to the ledger before Jev is called and corrected afterwards, so two calls running at once cannot pass a budget together.
 - Price: $0.042 per million input tokens; about $0.007 per 1,000 items for one question, about $0.05 per 1,000 items for `score_labels` (measured on the real library: $0.37 for 7,058 items against 30 tags).
 - A call that fails midway (a dropped request) keeps the answers that arrived and writes a ledger row `<operation>_failed` for what they cost; the error names the amount. Send the same call again to ask only the rest.
 
@@ -97,6 +101,19 @@ After a Jev stage, the attached answer can be tested by its name: `where p:>=0.9
 - Rows written by a pipeline carry `attached_by='agent'` and Jev's p as `confidence`.
 - A tag the user removed from an item is never put back. A row attached by hand is never changed or removed.
 - Every write is one undo batch: `runs` with `action: "undo", batch: <id>` (or `POST /api/undo/<id>`).
+- A pipeline is at most 4,000 characters. For a long list of ids, save a set first (`as @name`).
+
+### Tag tree changes (`tags`)
+
+| Operation | What happens |
+|---|---|
+| `create`, `describe` | Applied at once. A new tag is `proposed`. |
+| `rename`, `move`, `merge`, `delete` on your own tags | Applied at once. "Your own" means every tag in the subtree is agent-made or still proposed, and none of their tag rows was attached by hand or carries the owner's removal. |
+| The same four on anything else | Nothing changes and later operations in the call are not run. The reply is `PREVIEW` with the number of tags, how many the owner made or approved, tag rows, `by_hand`, `removed_by_owner`, the affected paths, and a token. Send the same operation again with `"confirm": "c_…"` inside it, within 10 minutes. The token fits only that operation on exactly those tags and rows. |
+
+- Every operation saves what it replaces (the tags, and for `merge` and `delete` their item rows) and returns `batch=<id>`; `runs` undo puts it back, deleted tags included. Undoing a `create` deletes the tags it made.
+- `merge` from an agent never puts back a tag the owner removed from an item: where the item carries the merged tag and a removal of the target, the removal stands.
+- `approve` and `reject` are refused: the owner does them in the web app.
 
 ## Playbook for a labeling agent
 

@@ -2,7 +2,7 @@
 un-bookmark, does it in the browser, and reports back."""
 import logging
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -29,10 +29,13 @@ def pending(user: User = Depends(current_user), session: Session = Depends(get_s
 @router.post("/removals/result", status_code=status.HTTP_200_OK)
 def result(body: RemovalResultIn, user: User = Depends(current_user), session: Session = Depends(get_session)):
     """`removed` and `already_gone` hard-delete the item (recording it in
-    `deleted_items`); `failed` leaves it archived for the next attempt."""
+    `deleted_items`); `failed` leaves it archived for the next attempt.
+    409 for an item that is not archived and saved."""
     item = get_item(session, user, body.item_id)
     if body.status == "failed":
         log.warning("Removal at source failed for item %s (%s): %s", item.id, item.source, body.detail)
         return {"item_id": body.item_id, "deleted": False}
+    if not item.is_saved or item.archived_at is None:  # only what `/removals/pending` handed out
+        raise HTTPException(status.HTTP_409_CONFLICT, "Item is not archived, so it is not waiting for removal")
     delete_item(session, user, item)
     return {"item_id": body.item_id, "deleted": True}

@@ -6,6 +6,8 @@ from sqlalchemy import select
 
 from kosha.config import APP_NAME, BACKEND_DIR, SERVER_HOST, SERVER_PORT, get_settings
 
+TRUSTED_PROXY_IPS = "127.0.0.1"  # reverse proxies whose forwarding headers `kosha serve` believes
+
 app = typer.Typer(help=f"{APP_NAME} backend", no_args_is_help=True, add_completion=False)
 
 
@@ -28,7 +30,9 @@ def serve(host: str = SERVER_HOST, port: int = SERVER_PORT, reload: bool = False
     from kosha.sync.scheduler import start_scheduler
 
     start_scheduler()
-    uvicorn.run("kosha.app:app", host=host, port=port, reload=reload)
+    # X-Forwarded-For/-Proto are honoured from a reverse proxy on this machine
+    # only, so the login limiter sees the real client address behind nginx.
+    uvicorn.run("kosha.app:app", host=host, port=port, reload=reload, proxy_headers=True, forwarded_allow_ips=TRUSTED_PROXY_IPS)
 
 
 @app.command()

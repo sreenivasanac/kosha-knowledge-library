@@ -15,7 +15,6 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 
 import numpy as np
 from constella import Label, Question, assign, group, shortlist, tree_hints
@@ -25,11 +24,12 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from kosha import jev
-from kosha.config import DEFAULT_NAMESPACE
+from kosha.config import DEFAULT_NAMESPACE, PIPELINE_MAX_CHARS
 from kosha.items_query import STABLE_ORDER
-from kosha.models import Item, ItemEmbedding, LabelRun, ResultSet, SavedView, SpendLedger
+from kosha.models import Item, ItemEmbedding, LabelRun, ResultSet, SavedView
 from kosha.pipeline import writes
 from kosha.pipeline.parser import Stage, Tok, number, split
+from kosha.prefs import load_settings
 from kosha.search import engine
 from kosha.search.embeddings import DOC_MODEL, QUERY_MODEL, EmbeddingError, embed_texts, query_vector, record_spend
 from kosha.search.query import KEYS, SORT_KEYS, And, Not, Or, QueryError, Text, compile_filter, order_by, parse, to_string
@@ -87,7 +87,7 @@ SHOW         show id author date summary:80 body:200 title tags folder domain ur
 SAVE         as @name   (7 days from last use)
 WRITE (last stage; over 25 items returns a preview and confirm token: call again with it)
   tag "A/B" [role primary|secondary|other|auto] | untag "A/B" | roles auto | star | unstar | read
-  unread | archive | unarchive | list "name" | save view "name"
+  unread | archive | unarchive | list "name" | save view "name" (an existing name: preview, then confirm)
 
 EXAMPLES
   all | count by author top 30
@@ -125,6 +125,7 @@ class Ctx:
     halted: bool = False
     source_query: str | None = None  # canonical filter of a `where` source, for `save view`
     stages: list[Stage] = field(default_factory=list)
+    set_prefix: str = ""  # put before the name of every set this pipeline saves (Ask: "ask.")
 
 
 def _in_set(ids: list[int]):
@@ -203,10 +204,18 @@ def _alias(tok: Tok) -> str:
 
 
 # --- Sets -------------------------------------------------------------------
+def _scoped(ctx: Ctx, name: str) -> str:
+    """The name a set is saved under: with the caller's prefix, once."""
+    return name if name.startswith(ctx.set_prefix) else ctx.set_prefix + name
+
+
 def _load_set(ctx: Ctx, name: str, pos: int) -> ResultSet:
-    row = ctx.session.scalar(select(ResultSet).where(
-        ResultSet.user_id == ctx.user_id, ResultSet.name == name,
-        (ResultSet.expires_at.is_(None)) | (ResultSet.expires_at > func.now())))
+    """A live set by name. A caller with a prefix reads its own `@name` first, then the user's."""
+    row = None
+    for wanted in dict.fromkeys((_scoped(ctx, name), name)):
+        row = row or ctx.session.scalar(select(ResultSet).where(
+            ResultSet.user_id == ctx.user_id, ResultSet.name == wanted,
+            (ResultSet.expires_at.is_(None)) | (ResultSet.expires_at > func.now())))
     if row is None:
         raise QueryError(f"No result set named @{name} (sets expire {SET_TTL.days} days after last use)", pos)
     row.expires_at = datetime.now(UTC) + SET_TTL
@@ -263,7 +272,7 @@ def _answer_tests(ctx: Ctx, stage: Stage) -> tuple[str, list]:
         tests.append((values, test, bool(m.group(1))))
         return " " * len(m.group(0))
 
-    number_ = r"\d*\.?\d+"
+    number_ = r"(?:\d+(?:\.\d+)?|\.\d+)"  # each digit can match in one place only, so a long digit string costs linear time
     rest = re.sub(rf"(?<!\S)(-?)(\w+):(?:(>=|<=|>|<)?({number_})(?!\.\.)|({number_})?\.\.({number_})?)(?!\S)", take, stage.arg)
     return rest, tests
 
@@ -371,7 +380,7 @@ def s_similar(ctx: Ctx, stage: Stage):
     top = _options(stage, toks[1:], {"top": _top}).get("top")
     target = toks[0].text
     if target.startswith("@"):
-        _load_set(ctx, target[1:], toks[0].pos)
+        target = "@" + _load_set(ctx, target[1:], toks[0].pos).name
     try:
         vector = engine._similar_vector(ctx.session, ctx.user_id, target)
     except QueryError as exc:
@@ -454,7 +463,9 @@ def _ask(ctx: Ctx, stage: Stage, pairs: list, operation: str) -> list | None:
     when the call stopped to ask for a confirm token (nothing spent)."""
     est = jev.estimate(ctx.session, ctx.user_id, pairs)
     if est.to_ask > jev.JEV_CONFIRM_ITEMS:
-        digest = writes.digest_of("spend", ctx.text)
+        # Bound to the pipeline, to how many questions are new and to the estimate shown:
+        # if the set or the cache changed since the preview, the token no longer fits.
+        digest = writes.digest_of("spend", ctx.text, est.to_ask, f"{est.usd:.4f}")
         if not writes.confirm_ok(ctx.user_id, digest, ctx.confirm):
             ctx.confirm_out, ctx.halted = writes.confirm_token(ctx.user_id, digest), True
             ctx.out.append(f"needs_confirm: {stage.name} would ask Jev {est.to_ask} new questions, est=${est.usd:.4f}. "
@@ -462,19 +473,12 @@ def _ask(ctx: Ctx, stage: Stage, pairs: list, operation: str) -> list | None:
             return None
         ctx.confirm_used = True
     try:
-        jev.check_budget(ctx.session, ctx.user_id, est.usd, ctx.run)
-        answers, spend = jev.ask(ctx.session, ctx.user_id, pairs, operation, ctx.run)
+        answers, spend = jev.ask(ctx.session, ctx.user_id, pairs, operation, ctx.run, estimate_usd=est.usd)
     except jev.cj.JevError as exc:
         # Requests that got through before the failure were billed and their
-        # answers are cached; without this row that money is in no ledger.
+        # answers are cached; `jev.ask` left that money in the ledger.
         paid = exc.partial[1] if exc.partial else None
         if paid is not None and paid.usd:
-            ctx.session.add(SpendLedger(
-                user_id=ctx.user_id, provider=jev.PROVIDER, operation=f"{operation}_failed", units=paid.input_tokens,
-                amount_usd=Decimal(f"{paid.usd:.6f}"),
-                meta={"unit": "tokens", "requests": paid.requests, "asked": paid.asked, "uncached_usd": round(paid.usd, 6),
-                      **({"run_id": ctx.run.id} if ctx.run else {})}))
-            ctx.session.commit()
             raise QueryError(f"{stage.name}: {exc} (${paid.usd:.4f} was spent on {paid.asked} answers that are now cached; "
                              "send the same call again to ask only the rest)", stage.pos) from None
         raise QueryError(f"{stage.name}: {exc}", stage.pos) from None
@@ -733,7 +737,7 @@ def s_groups(ctx: Ctx, stage: Stage):
         k = number(toks.pop(0), int, 1)
         if k > GROUPS_MAX_K:
             raise QueryError(f"At most {GROUPS_MAX_K} groups", stage.arg_pos)
-    prefix = _options(stage, toks, {"as": _name}).get("as", "g")
+    prefix = _scoped(ctx, _options(stage, toks, {"as": _name}).get("as", "g"))
     ids, vectors = _vectors(ctx, ctx.ids)
     if not ids:
         ctx.out.append("groups: no item in the set has an embedding yet (jobs: embed)")
@@ -835,7 +839,7 @@ def s_as(ctx: Ctx, stage: Stage):
     toks = stage.toks()
     if len(toks) != 1 or not toks[0].text.startswith("@"):
         raise QueryError("as @name", stage.arg_pos if stage.arg else stage.pos)
-    ctx.saved = _name(toks[0])
+    ctx.saved = _scoped(ctx, _name(toks[0]))
     save_set(ctx, ctx.saved, ctx.ids)
     return f"saved @{ctx.saved}"
 
@@ -946,6 +950,15 @@ def s_save(ctx: Ctx, stage: Stage):
     if view is None:
         view = SavedView(user_id=ctx.user_id, name=name)
         ctx.session.add(view)
+    elif view.query != query.strip():
+        # Replacing someone's saved view needs a confirm token bound to the old and the new filter.
+        digest = writes.digest_of(stage.raw, view.query, query.strip())
+        if not writes.confirm_ok(ctx.user_id, digest, ctx.confirm):
+            ctx.confirm_out, ctx.halted = writes.confirm_token(ctx.user_id, digest), True
+            ctx.out.append(f'PREVIEW {stage.raw}: a view with this name exists ({view.query or "(everything)"}) and would be '
+                           f'replaced by: {query.strip() or "(everything)"}. Nothing written.')
+            ctx.out.append(f'To replace it, call again with confirm="{ctx.confirm_out}" (valid {writes.CONFIRM_TTL_S // 60} min), or pick another name.')
+            return
     view.query = query.strip()
     ctx.out.append(f'saved view "{name}": {view.query or "(everything)"}')
 
@@ -968,8 +981,8 @@ def _render(ctx: Ctx, trace: list[dict]) -> str:
     the response cap; a cut inside `show` rows says how to get the rest."""
     head = f"n={len(ctx.ids)} spent=${ctx.spent:.4f}"
     if ctx.run is not None:
-        budget = (ctx.run.params or {}).get("budget_usd")
-        head += f" run={ctx.run.id} ${jev.run_spend(ctx.session, ctx.user_id, ctx.run.id):.4f}" + (f"/${budget:.2f}" if budget else "")
+        budget = jev.run_budget(load_settings(ctx.session, ctx.user_id), (ctx.run.params or {}).get("budget_usd"))
+        head += f" run={ctx.run.id} ${jev.run_spend(ctx.session, ctx.user_id, ctx.run.id):.4f}/${budget:.2f}"
     if ctx.saved:
         head += f" saved=@{ctx.saved} ({SET_TTL.days}d)"
     steps = " | ".join(f"{t['stage']} {t['in']}→{t['out']}" + (f" ${t['usd']:.4f}" if t["usd"] else "")
@@ -992,14 +1005,19 @@ def _render(ctx: Ctx, trace: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def run_query(session: Session, user_id: int, pipeline: str, confirm: str | None = None, run_id: int | None = None) -> dict:
+def run_query(session: Session, user_id: int, pipeline: str, confirm: str | None = None, run_id: int | None = None,
+              set_prefix: str = "") -> dict:
     """Run one pipeline and commit. Raises `QueryError` (message, position)
     for anything wrong with the text. Returns `text` (what an agent reads)
-    plus the same facts as fields for the web app."""
+    plus the same facts as fields for the web app. With `set_prefix` (Ask),
+    every set the pipeline saves gets that prefix, so it cannot replace a set
+    saved elsewhere."""
     pipeline = (pipeline or "").strip()
     if pipeline.lower() in ("help", "?"):
         return {"text": GRAMMAR, "n": 0, "stages": [], "spent_usd": 0.0}
-    ctx = Ctx(session, user_id, pipeline, confirm)
+    if len(pipeline) > PIPELINE_MAX_CHARS:
+        raise QueryError(f"A pipeline is at most {PIPELINE_MAX_CHARS} characters; save a long id list as a set first (as @name)", PIPELINE_MAX_CHARS)
+    ctx = Ctx(session, user_id, pipeline, confirm, set_prefix=set_prefix)
     if run_id is not None:
         ctx.run = session.get(LabelRun, run_id)
         if ctx.run is None or ctx.run.user_id != user_id or ctx.run.status != "running":

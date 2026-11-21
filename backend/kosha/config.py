@@ -30,6 +30,8 @@ CSRF_HEADER = "X-Requested-With"
 CSRF_HEADER_VALUE = "kosha"
 LOGIN_MAX_FAILURES = 5  # failed logins per client address ...
 LOGIN_WINDOW_S = 60  # ... within this many seconds, then 429
+STATEMENT_TIMEOUT_MS = 15_000  # a request handler's SQL statement is cancelled after this (kosha/db.py)
+PIPELINE_MAX_CHARS = 4000  # longest pipeline text `query` accepts (REST and MCP)
 WEB_DIST_DIR = REPO_ROOT / "web" / "dist"  # the built web app, served at / when present
 
 # --- MCP --------------------------------------------------------------------
@@ -69,9 +71,12 @@ DEFAULT_SETTINGS: dict = {
     "x_api_sync_enabled": False,
     "x_api_monthly_cap_usd": 3.0,
     "page_size": DEFAULT_PAGE_SIZE,
-    # Jev (kosha/jev.py): the most one pipeline call or label run may spend,
-    # and the most all Jev calls may spend in a calendar month.
+    # Jev (kosha/jev.py): the most one pipeline call may spend (also a label
+    # run's budget when none is given), and the most all Jev calls may spend
+    # in a calendar month.
     "jev_run_budget_usd": 0.50,
+    # The most a label run may spend in total, whatever budget the agent asks for when it starts the run.
+    "jev_run_max_budget_usd": 2.0,
     "jev_monthly_budget_usd": 5.0,
     # LLM layer (kosha/llm.py). Model ids are LiteLLM names ("provider/model").
     # Chosen from OpenAI's line-up and price list as of 21 Nov 2026; the Ask

@@ -565,11 +565,12 @@ def test_mcp_smoke(user, lib, session, monkeypatch):
 
         tree = call(http, "tags", operations=[{"op": "describe", "path": "AI/RAG", "description": "Retrieval augmented generation"},
                                               {"op": "create", "path": "AI/Agents", "description": "Coding agents"},
-                                              {"op": "approve", "path": "AI"}, {"op": "rename", "path": "AI/Agents", "name": "Coding agents"},
+                                              {"op": "rename", "path": "AI/Agents", "name": "Coding agents"},
                                               {"op": "move", "path": "AI/Coding agents", "parent": ""},
                                               {"op": "merge", "path": "Coding agents", "into": "AI/RAG"}, {"op": "delete", "path": "Nope"}])
         assert "created AI/Agents (proposed)" in tree and "merged Coding agents into AI/RAG" in tree and "FAILED delete Nope" in tree
-        assert "AI  30\n  RAG  30 [proposed] — Retrieval augmented generation" in tree
+        assert "AI  30 [proposed]\n  RAG  30 [proposed] — Retrieval augmented generation" in tree
+        assert "FAILED approve AI: approve is the owner's decision" in call(http, "tags", operations=[{"op": "approve", "path": "AI"}])
 
         added = call(http, "add_item", url="https://example.com/servos", note="for the arm", tags=["Robots"])
         assert added.startswith("added item ") and "A page about servos" in added
@@ -578,6 +579,12 @@ def test_mcp_smoke(user, lib, session, monkeypatch):
         assert call(http, "add_item").startswith("ERROR: Give a url or some text")
         assert "changed summary, starred, primary_tag" in call(http, "edit_item", id=item_id, summary="Servo torque tables", starred=True, primary_tag="Robots")
         assert f"{item_id} | web | Servo torque tables | Robots*" in call(http, "query", pipeline="where source:web is:starred torque | show id source summary tags")
+
+        # edit_item keeps what it replaces: undo puts the owner's note, summary and star back
+        edited = call(http, "edit_item", id=item_id, note="agent note", summary="agent summary", starred=False)
+        assert "changed note, summary, starred batch=" in edited
+        assert "undone" in call(http, "runs", action="undo", batch=int(edited.split("batch=")[1].split()[0]))
+        assert f"{item_id} | Servo torque tables" in call(http, "query", pipeline=f"where id:{item_id} is:starred | show id summary")
 
         assert "saved=41" in call(http, "jobs") and "no_embedding=1" in call(http, "jobs", action="status")
         assert "own_text=" in call(http, "jobs", action="summarize")
@@ -588,3 +595,139 @@ def test_mcp_smoke(user, lib, session, monkeypatch):
         assert "PREVIEW" in call(http, "runs", action="promote", run=run_id) and f"run={run_id} trial" in call(http, "runs", action="list")
     web = session.get(Item, item_id)
     assert (web.source, web.title, web.note, web.summary_method, web.url) == ("web", "A page about servos", "for the arm", "agent", "https://example.com/servos")
+
+
+# --- Pre-deploy review fixes ------------------------------------------------
+def test_run_budget_is_never_none_and_never_over_the_owners_maximum(session, user, lib, fake, monkeypatch):
+    plain = runs.start(session, user.id, "no budget given", "x")
+    assert plain.params["budget_usd"] == DEFAULT_SETTINGS["jev_run_budget_usd"]
+    greedy = runs.start(session, user.id, "asks for a lot", "x", budget_usd=100.0)
+    assert greedy.params["budget_usd"] == DEFAULT_SETTINGS["jev_run_max_budget_usd"]
+    assert q(session, user, 'where from:bob | jev "Is this about robots?"', run_id=plain.id)["n"] == N_ROBOT  # was a TypeError
+    greedy.params = {"name": "old row", "budget_usd": None}  # a run started before the fix
+    session.commit()
+    assert "/$0.50" in q(session, user, 'where from:cy | jev "Is this about cooking?"', run_id=greedy.id)["text"]
+    # the per-call budget holds inside a run too
+    monkeypatch.setitem(DEFAULT_SETTINGS, "jev_run_budget_usd", 0.000001)
+    asked = fake.asked
+    assert "per-call Jev budget" in err(session, user, 'all | jev "Is this about pasta?"', run_id=plain.id).message and fake.asked == asked
+
+
+def test_jev_reserves_its_estimate_while_the_call_runs(session, user, lib, fake, monkeypatch):
+    """Check and reserve happen under one lock: a second call made while the
+    first is still at Jev sees the first one's estimate in the month's spend."""
+    from kosha.db import SessionLocal
+
+    real, seen = fake.ask, []
+
+    def slow(pairs, by):
+        with SessionLocal() as other:
+            seen.append(jev.month_spend(other, user.id))
+            with pytest.raises(jev.BudgetError, match="monthly"):
+                jev.ask(other, user.id, [(executor.Question("Is this about robots?"), 1, "robot text long enough")], "jev")
+        return real(pairs, by)
+
+    monkeypatch.setattr(fake, "ask", slow)
+    monkeypatch.setitem(DEFAULT_SETTINGS, "jev_monthly_budget_usd", 0.0061)  # room for one such call, not two
+    monkeypatch.setattr(jev.cj, "estimate", lambda pairs, layout: Spend(usd=0.001 * len(pairs)))
+    assert q(session, user, 'where from:bob | jev "Is this about robots?"')["n"] == N_ROBOT
+    assert seen == [pytest.approx(0.006)]
+    row = session.scalars(select(SpendLedger).where(SpendLedger.provider == "jev")).one()
+    assert float(row.amount_usd) == pytest.approx(0.006) and "provisional" not in row.meta and row.meta["asked"] == N_ROBOT
+
+
+def test_confirm_tokens_are_bound_to_what_they_confirm(session, user, lib, fake, monkeypatch):
+    # spend: the token names how many questions are new and the estimate; a changed cache makes it stale
+    monkeypatch.setattr(jev, "JEV_CONFIRM_ITEMS", 10)
+    held = q(session, user, 'all | jev "Is this about cooking?"')
+    q(session, user, 'where from:cy | jev "Is this about cooking?"')
+    again = q(session, user, 'all | jev "Is this about cooking?"', confirm=held["confirm"])
+    assert "needs_confirm" in again["text"] and again["confirm"] != held["confirm"]
+    assert "needs_confirm" not in q(session, user, 'all | jev "Is this about cooking?"', confirm=again["confirm"])["text"]
+    # promote: the same counts with a different (item, tag) pair is a different write
+    run = runs.start(session, user.id, "trial", "x")
+    t = tag(session, user, "T", 300, namespace=run.namespace, origin="agent", status="proposed")
+    session.add(ItemTag(item_id=lib["rag"][0], tag_id=t.id, namespace=run.namespace, attached_by="agent"))
+    session.commit()
+    preview = runs.promote(session, user.id, run)
+    session.execute(ItemTag.__table__.update().where(ItemTag.tag_id == t.id).values(item_id=lib["cook"][0]))
+    session.commit()
+    moved = runs.promote(session, user.id, run, preview["confirm"])
+    assert not moved["applied"] and moved["tag_rows"] == preview["tag_rows"]
+    assert runs.promote(session, user.id, run, moved["confirm"])["applied"]
+
+
+def test_save_view_does_not_replace_a_view_without_confirm(session, user, lib):
+    q(session, user, 'where from:bob | save view "Mine"')
+    held = q(session, user, 'where from:ada | save view "Mine"')
+    assert "PREVIEW" in held["text"] and "from:bob" in held["text"] and held["confirm"]
+    assert session.scalar(select(SavedView.query).where(SavedView.name == "Mine")) == "from:bob"
+    assert "PREVIEW" not in q(session, user, 'where from:bob | save view "Mine"')["text"]  # the same filter again is no change
+    q(session, user, 'where from:ada | save view "Mine"', confirm=held["confirm"])
+    assert session.scalar(select(SavedView.query).where(SavedView.name == "Mine")) == "from:ada"
+
+
+def test_pipeline_text_is_capped_and_answer_tests_are_linear(session, user, lib, client):
+    import time
+
+    long = "where " + "id:1 " * 1000
+    assert "at most 4000 characters" in err(session, user, long).message
+    assert client.post("/api/query", json={"q": long}).status_code == 422
+    started = time.perf_counter()
+    executor._answer_tests(executor.Ctx(session, user.id, ""), executor.Stage("where", "p:" + "1" * 200_000 + "x", 0, 6))
+    assert time.perf_counter() - started < 1  # the old pattern needed minutes for this
+    q(session, user, 'all | jev "Is this about retrieval-augmented generation?" | as @r')
+    assert q(session, user, "@r | where p:>=.9")["n"] == N_RAG and q(session, user, "@r | where p:0.05..0.5")["n"] == N_ROBOT + N_COOK - 1
+
+
+def test_mcp_tag_changes_on_the_owners_work_need_confirm_and_can_be_undone(session, user, lib):
+    from kosha import mcp_server
+    from kosha.api.items import undo_batch
+
+    a, b = lib["rag"][0], lib["rag"][1]
+    real = tag(session, user, "Real", 400)  # made and approved by the owner
+    child = tag(session, user, "Child", 401, real, origin="agent", status="proposed")
+    mine = tag(session, user, "Mine", 402, origin="agent", status="proposed")
+    session.add_all([ItemTag(item_id=a, tag_id=real.id, role="primary"), ItemTag(item_id=b, tag_id=real.id, removed_by_user=True),
+                     ItemTag(item_id=b, tag_id=child.id, attached_by="agent", confidence=0.9),
+                     ItemTag(item_id=a, tag_id=mine.id, attached_by="agent"), ItemTag(item_id=b, tag_id=mine.id, attached_by="agent")])
+    session.commit()
+    real_id, child_id, mine_id = real.id, child.id, mine.id
+    op = lambda **kw: mcp_server._tag_op(session, user, "main", kw)  # noqa: E731
+    batch = lambda reply: int(reply.split("batch=")[1].split()[0])  # noqa: E731
+    with pytest.raises(ValueError, match="owner's decision"):
+        op(op="approve", path="Mine")
+
+    # the owner's tag: a preview with counts and paths, nothing changed, and a token that fits only this operation
+    held = op(op="delete", path="Real", recursive=True)
+    assert held.startswith("PREVIEW delete Real") and "by_hand=1 removed_by_owner=1" in held and "Real, Real/Child" in held
+    token = held.split('"confirm": "')[1].split('"')[0]
+    assert session.get(Tag, real_id) is not None
+    assert op(op="rename", path="Real", name="Fake", confirm=token).startswith("PREVIEW rename")
+    done = op(op="delete", path="Real", recursive=True, confirm=token)
+    session.expire_all()
+    assert done.startswith("deleted Real batch=") and session.get(Tag, real_id) is None and not rows_of(session, child_id)
+    undo_batch(session, user.id, batch(done))
+    session.expire_all()
+    assert session.get(Tag, child_id).parent_id == real_id and rows_of(session, child_id)[b].confidence == 0.9
+    assert (rows_of(session, real_id)[a].role, rows_of(session, real_id)[a].attached_by, rows_of(session, real_id)[b].removed_by_user) == ("primary", "human", True)
+
+    # the agent's own tag: applied at once; merging never brings back a tag the owner removed
+    merged = op(op="merge", path="Mine", into="Real/Child")
+    assert merged.startswith("merged Mine into Real/Child batch=") and set(rows_of(session, child_id)) == {a, b}
+    op(op="create", path="Mine")
+    session.add(ItemTag(item_id=b, tag_id=writes.find_tag(session, user.id, "main", "Mine").id, attached_by="agent"))
+    session.commit()
+    op(op="merge", path="Mine", into="Real")
+    session.expire_all()
+    assert rows_of(session, real_id)[b].removed_by_user and writes.find_tag(session, user.id, "main", "Mine") is None
+    undo_batch(session, user.id, batch(merged))
+    session.expire_all()
+    assert session.get(Tag, mine_id).name == "Mine" and set(rows_of(session, mine_id)) == {a, b} and set(rows_of(session, child_id)) == {b}
+    # rename, describe and create are undone as well
+    renamed = op(op="rename", path="Mine", name="Yours")
+    made = op(op="create", path="New/Leaf")
+    undo_batch(session, user.id, batch(renamed))
+    undo_batch(session, user.id, batch(made))
+    session.expire_all()
+    assert session.get(Tag, mine_id).name == "Mine" and writes.find_tag(session, user.id, "main", "New") is None

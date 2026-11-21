@@ -35,6 +35,9 @@ TAG_TREE_MAX = 60  # tags of the top two levels shown in the system prompt
 # star, archive, list, save, score_labels ...) is absent, so it is refused.
 READ_STAGES = frozenset({"where", "@", "all", "grep", "semantic", "hybrid", "similar", "sort", "head", "tail", "skip",
                          "sample", "jev", "union", "intersect", "except", "count", "stats", "terms", "groups", "show", "as"})
+# `as` and `groups` save named sets; Ask's go under this prefix, so a question
+# (or text in a bookmark that steers the model) cannot replace a set the user or an agent saved.
+SET_PREFIX = "ask."
 DATA_OPEN, DATA_CLOSE = "<library_data>", "</library_data>"
 
 SYSTEM_PROMPT = """\
@@ -121,7 +124,7 @@ def _run_tool(session: Session, user_id: int, pipeline: str, jev_left: float) ->
     token = jev.call_allowance.set(max(jev_left, 0.0))
     try:
         check_read_only(pipeline)
-        result = run_query(session, user_id, pipeline)
+        result = run_query(session, user_id, pipeline, set_prefix=SET_PREFIX)
     except QueryError as exc:
         session.rollback()
         return f"ERROR at character {exc.position}: {exc.message}", {"pipeline": pipeline, "n": 0, "note": f"error: {exc.message}"[:200], "jev_usd": 0.0}

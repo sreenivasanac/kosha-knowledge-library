@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from kosha import jev
 from kosha.auth import current_user
+from kosha.config import PIPELINE_MAX_CHARS
 from kosha.db import get_session
 from kosha.items_query import STABLE_ORDER
 from kosha.models import Item, ResultSet, User
@@ -23,7 +24,7 @@ router = APIRouter(tags=["pipeline"])
 
 
 class QueryIn(BaseModel):
-    q: str = Field(description='A pipeline, e.g. `where from:simonw | grep ~sqlite | head 20 | show id summary:80`; "help" for the grammar')
+    q: str = Field(max_length=PIPELINE_MAX_CHARS, description='A pipeline, e.g. `where from:simonw | grep ~sqlite | head 20 | show id summary:80`; "help" for the grammar')
     confirm: str | None = Field(None, description="The confirm token a preview returned")
     run: int | None = Field(None, description="A label run id: tags are read and written in that run's namespace")
 
@@ -78,8 +79,7 @@ def jev_check(body: JevCheckIn, user: User = Depends(current_user), session: Ses
         estimate = jev.estimate(session, user.id, pairs)
         if body.dry_run:
             return {"estimate_usd": round(estimate.usd, 6), "n": len(pairs), "cached": estimate.n - estimate.to_ask}
-        jev.check_budget(session, user.id, estimate.usd)
-        answers, spend = jev.ask(session, user.id, pairs, "jev_check")
+        answers, spend = jev.ask(session, user.id, pairs, "jev_check", estimate_usd=estimate.usd)
     except jev.BudgetError as exc:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from None
     except jev.cj.JevError as exc:

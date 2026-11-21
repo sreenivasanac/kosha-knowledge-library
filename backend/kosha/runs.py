@@ -10,9 +10,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from kosha.config import DEFAULT_NAMESPACE
-from kosha.jev import run_spend
+from kosha.jev import run_budget, run_spend
 from kosha.models import ItemTag, LabelRun, SpendLedger
 from kosha.pipeline import writes
+from kosha.prefs import load_settings
 
 NAMESPACE_PREFIX = "run-"
 
@@ -42,7 +43,9 @@ def get_run(session: Session, user_id: int, run_id: int) -> LabelRun:
 
 def start(session: Session, user_id: int, name: str, strategy: str, budget_usd: float | None = None) -> LabelRun:
     """Open a run with an empty namespace of its own. `query` and `tags`
-    calls that pass this run's id read and write that namespace."""
+    calls that pass this run's id read and write that namespace. The budget
+    kept is `jev.run_budget`: never None, never over `jev_run_max_budget_usd`."""
+    budget_usd = run_budget(load_settings(session, user_id), budget_usd)  # the owner's maximum wins over the agent's wish
     run = LabelRun(user_id=user_id, strategy=strategy, namespace="", params={"name": name, "budget_usd": budget_usd})
     session.add(run)
     session.flush()
@@ -90,12 +93,14 @@ def promote(session: Session, user_id: int, run: LabelRun, confirm: str | None =
     """Copy a run's tree and tag rows into `main`. New tags arrive proposed;
     rows arrive as agent rows, so tags the user removed or attached by hand
     are left alone. Always a preview first: the confirm token is bound to the
-    run and to how much would be copied."""
+    run and to the exact tags and (item, tag) pairs that would be copied."""
     paths = writes.tag_paths(session, user_id, run.namespace)
     rows = list(session.scalars(select(ItemTag).where(ItemTag.namespace == run.namespace, ~ItemTag.removed_by_user,
                                                       ItemTag.tag_id.in_(paths))))
     new_tags = [path for _, path in paths.values() if writes.find_tag(session, user_id, DEFAULT_NAMESPACE, path) is None]
-    digest = writes.digest_of("promote", run.id, len(paths), len(rows))
+    # Bound to exactly what would be copied: every tag path and every (item, tag path) pair.
+    digest = writes.digest_of("promote", run.id, sorted(path for _, path in paths.values()),
+                              sorted((r.item_id, paths[r.tag_id][1]) for r in rows))
     preview = {"run": run.id, "tags": len(paths), "new_tags": len(new_tags), "tag_rows": len(rows),
                "items": len({r.item_id for r in rows})}
     if not writes.confirm_ok(user_id, digest, confirm):

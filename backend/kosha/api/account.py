@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from kosha.auth import current_user, hash_token
+from kosha.auth import current_user, hash_token, session_user
 from kosha.db import SessionLocal, get_session
 from kosha.models import ApiToken, SpendLedger, SyncState, User
 from kosha.prefs import load_settings
@@ -36,14 +36,15 @@ def _token_out(token: ApiToken) -> dict:
 
 
 @router.get("/tokens")
-def list_tokens(user: User = Depends(current_user), session: Session = Depends(get_session)) -> list[dict]:
+def list_tokens(user: User = Depends(session_user), session: Session = Depends(get_session)) -> list[dict]:
     """Names and dates only; a token's secret is shown once, when it is created."""
     return [_token_out(t) for t in session.scalars(select(ApiToken).where(ApiToken.user_id == user.id).order_by(ApiToken.id))]
 
 
 @router.post("/tokens", status_code=status.HTTP_201_CREATED)
-def create_token(body: TokenIn, user: User = Depends(current_user), session: Session = Depends(get_session)) -> dict:
-    """Create a bearer token. `token` in the answer is the only time the secret is shown."""
+def create_token(body: TokenIn, user: User = Depends(session_user), session: Session = Depends(get_session)) -> dict:
+    """Create a bearer token. `token` in the answer is the only time the secret is shown.
+    The `/tokens` routes need the web app's session cookie: a bearer token gets 403."""
     secret = TOKEN_PREFIX + secrets.token_urlsafe(TOKEN_BYTES)
     token = ApiToken(user_id=user.id, name=body.name.strip(), token_hash=hash_token(secret))
     session.add(token)
@@ -52,7 +53,7 @@ def create_token(body: TokenIn, user: User = Depends(current_user), session: Ses
 
 
 @router.delete("/tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_token(token_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+def delete_token(token_id: int, user: User = Depends(session_user), session: Session = Depends(get_session)):
     token = session.get(ApiToken, token_id)
     if token is None or token.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Token not found")

@@ -179,23 +179,22 @@ def move(tag_id: int, body: TagMove, user: User = Depends(current_user), session
     return tag_out(get_tag(session, user, tag_id))
 
 
-@router.post("/tags/{tag_id}/merge", response_model=TagOut)
-def merge(tag_id: int, body: TagMerge, user: User = Depends(current_user), session: Session = Depends(get_session)):
-    """Fold this tag into another: its items and child tags move over, then it
-    is deleted. Where an item carries both, the target's row is kept."""
-    tag, into = get_tag(session, user, tag_id), get_tag(session, user, body.into_id)
+def merge_tags(session: Session, user: User, tag: Tag, into: Tag, restore_removed: bool = True) -> None:
+    """Fold `tag` into `into` and commit. `restore_removed` is the owner's
+    merge: an item they removed the target from, but which carries the merged
+    tag, carries the target again. An agent passes False: a removal stands."""
+    tag_id, into_id = tag.id, into.id
     if is_within(str(into.path), str(tag.path)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot merge a tag into itself or its own subtree")
     if into.namespace != tag.namespace:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tags are in different namespaces")
     params = {"a": tag.id, "b": into.id}
-    # An item the user removed the target from, but which still carries the
-    # merged tag, carries the target again.
-    session.execute(text("""
-        UPDATE item_tags b SET removed_by_user = false, role = 'other' FROM item_tags a
-        WHERE a.tag_id = :a AND b.tag_id = :b AND a.item_id = b.item_id
-          AND b.removed_by_user AND NOT a.removed_by_user
-    """), params)
+    if restore_removed:
+        session.execute(text("""
+            UPDATE item_tags b SET removed_by_user = false, role = 'other' FROM item_tags a
+            WHERE a.tag_id = :a AND b.tag_id = :b AND a.item_id = b.item_id
+              AND b.removed_by_user AND NOT a.removed_by_user
+        """), params)
     session.execute(text("""
         DELETE FROM item_tags a USING item_tags b
         WHERE a.tag_id = :a AND b.tag_id = :b AND a.item_id = b.item_id
@@ -204,12 +203,19 @@ def merge(tag_id: int, body: TagMerge, user: User = Depends(current_user), sessi
     try:
         for child in session.scalars(select(Tag).where(Tag.parent_id == tag.id)).all():
             move_tag(session, child, into)
-            into = get_tag(session, user, body.into_id)  # move_tag expires loaded rows
+            into = get_tag(session, user, into_id)  # move_tag expires loaded rows
     except IntegrityError:
         session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "A child tag with the same name exists in the target") from None
     session.delete(get_tag(session, user, tag_id))
     _commit(session)
+
+
+@router.post("/tags/{tag_id}/merge", response_model=TagOut)
+def merge(tag_id: int, body: TagMerge, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Fold this tag into another: its items and child tags move over, then it
+    is deleted. Where an item carries both, the target's row is kept."""
+    merge_tags(session, user, get_tag(session, user, tag_id), get_tag(session, user, body.into_id))
     return tag_out(get_tag(session, user, body.into_id))
 
 

@@ -91,6 +91,15 @@ def current_user(request: Request, session: Session = Depends(get_session)) -> U
     return user
 
 
+def session_user(request: Request, session: Session = Depends(get_session)) -> User:
+    """Dependency for routes only the signed-in owner may use (API tokens): the
+    session cookie, never a bearer token, so a leaked or agent-held token
+    cannot mint or revoke tokens."""
+    if request.headers.get("authorization", "").lower().startswith("bearer ") or not request.session.get("uid"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Sign in to the web app to manage API tokens; a bearer token cannot")
+    return current_user(request, session)
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
@@ -109,8 +118,9 @@ class UserOut(BaseModel):
 
 @router.post("/login", response_model=UserOut)
 def login(body: LoginIn, request: Request, session: Session = Depends(get_session)):
-    # ponytail: in-process and keyed by the peer address; behind a reverse
-    # proxy every client shares one address, so limit there as well.
+    # ponytail: in-process and keyed by the client address. `kosha serve`
+    # trusts X-Forwarded-For from 127.0.0.1 only, so behind a local reverse
+    # proxy this is the real client; add `limit_req` in nginx as well (README).
     address = request.client.host if request.client else "unknown"
     failures = _login_failures[address]
     now = time.monotonic()

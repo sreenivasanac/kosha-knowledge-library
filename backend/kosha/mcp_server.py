@@ -5,6 +5,7 @@ The tool descriptions are the agent's only manual, so `query` carries the
 whole pipeline grammar. Tools return plain text sized for a model to read.
 """
 import contextvars
+import json
 import threading
 from datetime import UTC, datetime
 
@@ -20,11 +21,10 @@ from kosha.add_item import add_item as add_one
 from kosha.api import tags as tags_api
 from kosha.api.items import undo_batch
 from kosha.auth import bearer_user
-from kosha.config import APP_NAME, DEFAULT_NAMESPACE, MCP_PATH
-from kosha.db import SessionLocal
-from kosha.models import Item, LabelRun, SyncState, User
+from kosha.config import APP_NAME, DEFAULT_NAMESPACE, MCP_PATH, PIPELINE_MAX_CHARS
+from kosha.db import RequestSession, SessionLocal
+from kosha.models import Item, ItemTag, LabelRun, SyncState, User
 from kosha.pipeline import GRAMMAR, run_query, writes
-from kosha.schemas import TagMerge
 from kosha.search.embeddings import DOC_MODEL, embed_items
 from kosha.search.index import reindex
 from kosha.search.query import QueryError
@@ -32,6 +32,9 @@ from kosha.summaries import summarize
 from kosha.sync.x_api import sync_bookmarks
 
 TREE_MAX_LINES = 400  # about 10 tokens a tag
+TAG_COLUMNS = ("id", "parent_id", "path", "name", "slug", "description", "status", "origin", "namespace", "color", "sort")
+GATED_TAG_OPS = ("rename", "move", "merge", "delete")  # need a confirm token when they touch the owner's work
+PREVIEW_PATHS = 10  # affected tag paths listed in a tags preview
 METHOD_AGENT = "agent"  # items.summary_method for a summary an agent wrote; `kosha summarize` leaves it alone
 
 mcp = MCPServer(APP_NAME.lower(), log_level="WARNING", instructions=(  # WARNING: the SDK installs a root log handler at this level
@@ -49,7 +52,7 @@ def _call(fn):
     user_id = _user_id.get()
 
     def work() -> str:
-        with SessionLocal() as session:
+        with RequestSession() as session:
             try:
                 return fn(session, session.get(User, user_id))
             except QueryError as exc:
@@ -74,6 +77,7 @@ def _fmt(values: dict) -> str:
                       "preview. One call does a whole chain on the server.\n\n" + GRAMMAR +
                       "\nReplies start with `n=<items> spent=$<this call>` and one line of `stage in→out` per stage. "
                       "A write over 25 items returns PREVIEW and a confirm token: repeat the same pipeline with `confirm`. "
+                      f"A pipeline is at most {PIPELINE_MAX_CHARS} characters. "
                       "`run` is a label-run id (see `runs`): tags are then read and written in that run's trial namespace. "
                       "Errors give the character position in your pipeline.")
 async def query(pipeline: str, confirm: str | None = None, run: int | None = None) -> str:
@@ -100,19 +104,75 @@ def _tree(session, user: User, namespace: str) -> str:
     return f"tags in {namespace} (name  items incl. children  [status] — definition):\n" + "\n".join(lines[:TREE_MAX_LINES]) + more
 
 
+def _undo_hint(batch_id: int) -> str:
+    return f"batch={batch_id} (undo: runs undo {batch_id})"
+
+
 def _tag_op(session, user: User, namespace: str, op: dict) -> str:
-    """One change to the tree. Paths are full paths of names from the root ("AI/RAG")."""
+    """One change to the tree. Paths are full paths of names from the root ("AI/RAG").
+
+    Safety rules for an agent (the owner's web app is not bound by them):
+    - `approve` and `reject` do not exist here: the owner decides those.
+    - rename, move, merge and delete apply at once only when every tag in the
+      subtree is the agent's own (origin agent, or still proposed) and carries
+      no row attached by hand and no removal marker. Otherwise the reply is a
+      PREVIEW with counts, the affected paths and a confirm token bound to
+      this operation and to exactly those tags and rows.
+    - every change first saves what it replaces as an undo batch.
+    - a merge never brings back a tag the user removed from an item."""
     kind, path = str(op.get("op", "")).lower(), str(op.get("path", "")).strip()
     if kind == "create":
         if writes.find_tag(session, user.id, namespace, path) is not None:
             return f"exists {path}"
+        had = set(writes.tag_paths(session, user.id, namespace))
         tag = writes.create_tag_path(session, user.id, namespace, path)
         tag.description = op.get("description")
+        batch_id = writes._save_batch(session, user.id, {"created_tags": sorted(set(writes.tag_paths(session, user.id, namespace)) - had)})
         session.commit()
-        return f"created {path} (proposed)"
+        return f"created {path} (proposed) {_undo_hint(batch_id)}"
+    if kind in ("approve", "reject"):
+        raise ValueError(f"{kind} is the owner's decision: they approve or reject tags in the web app")
+    if kind not in (*GATED_TAG_OPS, "describe"):
+        raise ValueError(f'Unknown op "{kind}". Use create, rename, describe, move, merge or delete')
     tag = writes.find_tag(session, user.id, namespace, path)
     if tag is None:
         raise ValueError(f'No tag at "{path}" in namespace {namespace}')
+    into = None
+    if kind == "merge":
+        into = writes.find_tag(session, user.id, namespace, str(op.get("into", "")))
+        if into is None:
+            raise ValueError(f'No tag at "{op.get("into")}" to merge into')
+    # What the operation touches: the tag alone for describe, else its whole subtree.
+    tree = sorted(((t, p) for t, p in writes.tag_paths(session, user.id, namespace).values()
+                   if t.id == tag.id or (kind != "describe" and tags_api.is_within(str(t.path), str(tag.path)))), key=lambda pair: pair[1])
+    if kind == "delete" and len(tree) > 1 and not op.get("recursive"):
+        raise ValueError("Tag has child tags; pass recursive: true to delete them too")
+    ids = [t.id for t, _ in tree]
+    rows = list(session.scalars(select(ItemTag).where(ItemTag.tag_id.in_(ids)).order_by(ItemTag.item_id, ItemTag.tag_id)))
+    owners = [p for t, p in tree if t.origin != writes.AGENT and t.status != "proposed"]
+    by_hand = sum(r.attached_by != writes.AGENT and not r.removed_by_user for r in rows)
+    removed = sum(r.removed_by_user for r in rows)
+    if kind in GATED_TAG_OPS and (owners or by_hand or removed):
+        digest = writes.digest_of("tags", namespace, json.dumps({k: v for k, v in op.items() if k != "confirm"}, sort_keys=True, default=str),
+                                  ids, [(r.item_id, r.tag_id, r.attached_by, r.removed_by_user) for r in rows])
+        if not writes.confirm_ok(user.id, digest, op.get("confirm")):
+            listed = ", ".join(p for _, p in tree[:PREVIEW_PATHS]) + (f", ... {len(tree) - PREVIEW_PATHS} more" if len(tree) > PREVIEW_PATHS else "")
+            return (f"PREVIEW {kind} {path}: nothing changed, later operations not run. It touches {len(tree)} tag(s), "
+                    f"{len(owners)} of them made or approved by the owner, and {len(rows)} tag row(s) on {len({r.item_id for r in rows})} item(s): "
+                    f"by_hand={by_hand} removed_by_owner={removed}.\n  tags: {listed}\n"
+                    f'To apply, send this operation again with "confirm": "{writes.confirm_token(user.id, digest)}" '
+                    f"(valid {writes.CONFIRM_TTL_S // 60} min). It can be undone afterwards.")
+    # The undo batch: the tags as they are, and the item rows the operation changes or drops.
+    if kind == "merge":
+        mine = [r for r in rows if r.tag_id == tag.id]
+        kept, tag_ids = mine + list(session.scalars(select(ItemTag).where(
+            ItemTag.tag_id == into.id, ItemTag.item_id.in_({r.item_id for r in mine})))), [tag.id, into.id]
+    else:
+        kept, tag_ids = (rows, ids) if kind == "delete" else ([], [])
+    batch_id = writes._save_batch(session, user.id, {
+        "tags": [{c: str(getattr(t, c)) if c == "path" else getattr(t, c) for c in TAG_COLUMNS} for t, _ in tree],
+        "items": [{"id": i} for i in sorted({r.item_id for r in kept})], "tag_ids": tag_ids,
+        "item_tags": [{c: getattr(r, c) for c in writes.ITEM_TAG_COLUMNS} for r in kept]})
     if kind == "rename":
         tag.name, tag.slug = str(op["name"]).strip(), tags_api.slugify(str(op["name"]))
     elif kind == "describe":
@@ -124,20 +184,13 @@ def _tag_op(session, user: User, namespace: str, op: dict) -> str:
             raise ValueError(f'No tag at "{parent}" to move under')
         tags_api.move_tag(session, tag, target)
     elif kind == "merge":
-        into = writes.find_tag(session, user.id, namespace, str(op.get("into", "")))
-        if into is None:
-            raise ValueError(f'No tag at "{op.get("into")}" to merge into')
-        tags_api.merge(tag.id, TagMerge(into_id=into.id), user=user, session=session)
-        return f"merged {path} into {op['into']}"
-    elif kind in ("approve", "reject"):
-        tag.status = "approved" if kind == "approve" else "rejected"
-    elif kind == "delete":
-        tags_api.delete_tag(tag.id, recursive=bool(op.get("recursive")), user=user, session=session)
-        return f"deleted {path}"
+        tags_api.merge_tags(session, user, tag, into, restore_removed=False)
+        return f"merged {path} into {op['into']} {_undo_hint(batch_id)}"
     else:
-        raise ValueError(f'Unknown op "{kind}". Use create, rename, describe, move, merge, approve, reject or delete')
+        tags_api.delete_tag(tag.id, recursive=bool(op.get("recursive")), user=user, session=session)
+        return f"deleted {path} {_undo_hint(batch_id)}"
     tags_api._commit(session)
-    return f"{kind} {path}: ok"
+    return f"{kind} {path}: ok {_undo_hint(batch_id)}"
 
 
 def _namespace(session, user: User, run: int | None) -> str:
@@ -149,7 +202,12 @@ def _namespace(session, user: User, run: int | None) -> str:
                       '  {"op":"create","path":"AI/RAG","description":"Retrieval-augmented generation: ..."}  (new tags are proposed)\n'
                       '  {"op":"rename","path":"AI/RAG","name":"Retrieval"}   {"op":"describe","path":"AI/RAG","description":"..."}\n'
                       '  {"op":"move","path":"AI/RAG","parent":"ML"}  (parent "" = top level)   {"op":"merge","path":"AI/Rag2","into":"AI/RAG"}\n'
-                      '  {"op":"approve","path":"AI/RAG"}   {"op":"reject","path":"AI/RAG"}   {"op":"delete","path":"AI/RAG","recursive":false}\n'
+                      '  {"op":"delete","path":"AI/RAG","recursive":false}\n'
+                      "Approving and rejecting tags is the owner's, in the web app. Every change returns `batch=<id>`: "
+                      "`runs` undo reverses it. rename, move, merge and delete apply at once on your own tags (agent-made or "
+                      "still proposed, with no tag row attached by hand); on anything the owner made, approved or attached "
+                      'they return PREVIEW with counts and a token: send the same operation again with "confirm":"c_...". '
+                      "A merge never puts back a tag the owner removed from an item.\n"
                       "Paths are full paths of names from the root. Write the definition so a yes/no question can be answered "
                       "from it: it is what `score_labels` asks Jev. Pass `run` to work on a label run's trial tree. "
                       "Attach tags to items with `query` (... | tag \"AI/RAG\").")
@@ -160,6 +218,9 @@ async def tags(operations: list[dict] | None = None, run: int | None = None) -> 
         for op in operations or []:
             try:
                 done.append(_tag_op(session, user, namespace, op))
+                if done[-1].startswith("PREVIEW"):
+                    session.rollback()
+                    break
             except (ValueError, HTTPException, KeyError) as exc:
                 session.rollback()
                 done.append(f"FAILED {op.get('op')} {op.get('path')}: {getattr(exc, 'detail', None) or exc} (later operations not run)")
@@ -172,7 +233,8 @@ async def tags(operations: list[dict] | None = None, run: int | None = None) -> 
 # --- edit_item --------------------------------------------------------------
 @mcp.tool(structured_output=False, description="Change one item (id from `query ... | show id`). Any of: `note` (your note; \"\" clears it), `summary` "
                       "(replaces the stored summary; kept as agent-written), `starred`, `read`, `archived` (true/false), "
-                      "`primary_tag` / `secondary_tag` (a tag path: attaches it with that role). For many items use `query` "
+                      "`primary_tag` / `secondary_tag` (a tag path: attaches it with that role). The reply ends with `batch=<id>`: "
+                      "`runs` undo with it puts back the note, summary, state and tags this call replaced. For many items use `query` "
                       "with a write stage. To read an item: query `where id:<id> | show author date body:2000 url tags`.")
 async def edit_item(id: int, note: str | None = None, summary: str | None = None, starred: bool | None = None,
                     read: bool | None = None, archived: bool | None = None, primary_tag: str | None = None,
@@ -182,6 +244,13 @@ async def edit_item(id: int, note: str | None = None, summary: str | None = None
         if item is None or item.user_id != user.id:
             raise ValueError(f"No item {id}")
         now, changed = datetime.now(UTC), []
+        # What this call may replace, kept as one undo batch: the item's state, note and summary, and its tag rows.
+        tag_rows = list(session.scalars(select(ItemTag).where(ItemTag.item_id == item.id, ItemTag.namespace == DEFAULT_NAMESPACE)))
+        before = {"items": [{"id": item.id, "starred": item.starred, "note": item.note,
+                             "read_at": item.read_at.isoformat() if item.read_at else None,
+                             "archived_at": item.archived_at.isoformat() if item.archived_at else None,
+                             "summary": item.summary, "summary_method": item.summary_method, "summary_status": item.summary_status}],
+                  "tag_ids": [r.tag_id for r in tag_rows], "item_tags": [{c: getattr(r, c) for c in writes.ITEM_TAG_COLUMNS} for r in tag_rows]}
         if note is not None:
             item.note = note or None
             changed.append("note")
@@ -202,12 +271,16 @@ async def edit_item(id: int, note: str | None = None, summary: str | None = None
                 tag = writes.find_tag(session, user.id, DEFAULT_NAMESPACE, path)
                 if tag is None:
                     raise ValueError(f'No tag at "{path}". Create it with the tags tool first.')
+                before["tag_ids"] = sorted({*before["tag_ids"], tag.id})
                 counts, _ = writes.apply_tags(session, user.id, DEFAULT_NAMESPACE, [(item.id, tag.id, role, None)])
                 changed.append(f"{role}_tag" + (" (skipped: you removed this tag or set it by hand)" if counts["removed_by_you"] or counts["by_hand"] else ""))
         if "note" in changed or "summary" in changed:
             reindex(session, [item.id])  # both are searchable
+        if not changed:
+            return f"item {id}: nothing to change"
+        batch_id = writes._save_batch(session, user.id, before)
         session.commit()
-        return f"item {id}: changed {', '.join(changed)}" if changed else f"item {id}: nothing to change"
+        return f"item {id}: changed {', '.join(changed)} {_undo_hint(batch_id)}"
 
     return await _call(work)
 
@@ -289,13 +362,14 @@ async def jobs(action: str = "status") -> str:
 # --- runs -------------------------------------------------------------------
 @mcp.tool(structured_output=False, description="Label runs: an experiment gets its own trial tag tree (a namespace), so it never touches the real one. "
                       "`action`:\n"
-                      "  start    needs `name`, `strategy`; optional `budget_usd`. Returns the run id to pass as `run` to query and tags\n"
+                      "  start    needs `name`, `strategy`; optional `budget_usd` (default: the per-call budget; never over the owner's "
+                      "maximum, and the reply says what you got). Returns the run id to pass as `run` to query and tags\n"
                       "  status   `run`: coverage (share of saved items with a primary tag), untagged, tags, dollars spent, budget\n"
                       "  close    `run`: finish it and record final coverage and spend\n"
                       "  compare  `runs` [a, b, ...]: the same measures side by side\n"
                       "  promote  `run`: copy its tree into the real one as proposed tags. Returns a preview and a confirm token; "
                       "call again with `confirm`\n"
-                      "  undo     `batch`: reverse one write (the batch id a write returned)\n"
+                      "  undo     `batch`: reverse one write (the batch id a `query` write, a `tags` change or `edit_item` returned)\n"
                       "  list     every run")
 async def runs(action: str, run: int | None = None, name: str | None = None, strategy: str | None = None,
                budget_usd: float | None = None, runs: list[int] | None = None, batch: int | None = None,
@@ -305,7 +379,8 @@ async def runs(action: str, run: int | None = None, name: str | None = None, str
             if not name or not strategy:
                 raise ValueError("start needs name and strategy")
             started = label_runs.start(session, user.id, name, strategy, budget_usd)
-            return f"run={started.id} namespace={started.namespace} budget_usd={budget_usd}. Pass run={started.id} to query and tags."
+            return (f"run={started.id} namespace={started.namespace} budget_usd={started.params['budget_usd']}. "
+                    f"Pass run={started.id} to query and tags.")
         if action == "list":
             rows = session.scalars(select(LabelRun).where(LabelRun.user_id == user.id).order_by(LabelRun.id)).all()
             return "\n".join(f"run={r.id} {(r.params or {}).get('name')} strategy={r.strategy} {r.status} coverage={r.coverage}" for r in rows) or "no runs"
@@ -348,7 +423,7 @@ class McpEndpoint:
         header = dict(scope["headers"]).get(b"authorization", b"").decode("latin-1")
 
         def authenticate() -> int | None:
-            with SessionLocal() as session:
+            with RequestSession() as session:
                 user = bearer_user(session, header)
                 session.commit()  # last_used_at
                 return user.id if user else None

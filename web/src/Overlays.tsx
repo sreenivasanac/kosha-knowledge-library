@@ -245,7 +245,11 @@ function MediaText({ ids }: { ids: number[] | 'all' }) {
   async function start() {
     setBusy(true);
     try {
-      const { queued } = await api<MediaEstimate & { queued: number }>('/api/media-text/start', { method: 'POST', body: target });
+      const { queued } = await api<MediaEstimate & { queued: number }>('/api/media-text/start', {
+        method: 'POST',
+        // The server refuses large runs unless the request carries the estimate the user just saw.
+        body: { ...target, confirm_usd: estimate.data?.estimate_usd },
+      });
       toast(`Getting text for ${queued.toLocaleString()} media file${queued === 1 ? '' : 's'}; it appears on the items when done`);
       void client.invalidateQueries({ queryKey: ['media-text-status'] });
       invalidateLibrary();

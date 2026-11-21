@@ -7,13 +7,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from kosha import ask as ask_module
-from kosha import jev, llm, media_text, summaries
-from kosha.api import account
+from kosha import auth, jev, llm, media_text, summaries
+from kosha.app import app
+from kosha.api import account, ai
+from kosha.db import SessionLocal
 from kosha.ingest import ingest_envelope
-from kosha.models import ApiToken, Item, ItemLink, ItemMedia, List, Setting, SpendLedger, SyncState
+from kosha.models import ApiToken, Item, ItemLink, ItemMedia, List, ResultSet, Setting, SpendLedger, SyncState
+from kosha.pipeline import run_query
 from kosha.parsers import parse_capture
 from kosha.parsers.linkedin import posted_at_from_label, split_raw_text
 from kosha.search.index import reindex
@@ -219,7 +223,7 @@ def test_media_text_estimate_and_extract(session, user, media_item, fake_media):
     item, video, photo, evil = media_item
     rows = media_text.pending(session, user.id, [item.id])
     assert media_text.estimate(session, user.id, rows) == {
-        "n_media": 3, "minutes": 2.0, "images": 2, "estimate_usd": round(2 * 0.0045 + 2 * media_text.IMAGE_ESTIMATE_USD, 4)}
+        "n_media": 3, "minutes": 2.0, "images": 2, "unknown_duration": 0, "estimate_usd": round(2 * 0.0045 + 2 * media_text.IMAGE_ESTIMATE_USD, 4)}
     assert media_text.pending(session, user.id) == [] and len(media_text.pending(session, user.id, everything=True)) == 3
     before = item.content_hash
 
@@ -265,9 +269,71 @@ def test_media_text_routes(client, session, user, media_item, fake_media, monkey
     assert body.status_code == 202 and body.json()["queued"] == 3 and started == [3]
     status = client.get("/api/media-text/status").json()
     assert status["counts"]["none"] == 3 and status["running"] is False and isinstance(status["ffmpeg"], bool)
+    # `all`, or an estimate over the limit, starts only with confirm_usd at or above the current estimate
+    held = client.post("/api/media-text/start", json={"all": True})
+    assert held.status_code == 409 and held.json()["detail"]["estimate_usd"] == estimate["estimate_usd"] and started == [3]
+    assert client.post("/api/media-text/start", json={"all": True, "confirm_usd": estimate["estimate_usd"] / 2}).status_code == 409
+    assert client.post("/api/media-text/start", json={"all": True, "confirm_usd": estimate["estimate_usd"]}).status_code == 202
+    monkeypatch.setattr(ai, "MEDIA_TEXT_CONFIRM_ABOVE_USD", 0.001)
+    assert client.post("/api/media-text/start", json={"item_ids": [item.id]}).status_code == 409
+    assert client.post("/api/media-text/start", json={"item_ids": [item.id], "confirm_usd": 1}).status_code == 202
     session.merge(Setting(user_id=user.id, key="llm_monthly_cap_usd", value=0.001))
     session.commit()
-    assert client.post("/api/media-text/start", json={"item_ids": [item.id]}).status_code == 402
+    assert client.post("/api/media-text/start", json={"item_ids": [item.id], "confirm_usd": 1}).status_code == 402
+
+
+def test_media_text_measures_a_recording_of_unknown_length(session, user, media_item, fake_media, monkeypatch):
+    """No duration from the source: the file is measured before the cap check, and refused when it cannot be."""
+    item, video, _, _ = media_item
+    video.duration_ms = None
+    session.commit()
+    assert media_text.estimate(session, user.id, [video])["unknown_duration"] == 1
+    monkeypatch.setattr(media_text, "probe_duration_ms", lambda path: None)
+    spent, reason = media_text.extract_one(session, user.id, video)
+    assert reason == media_text.UNKNOWN_LENGTH and fake_media.transcripts == [] and video.extract_status == "failed"
+    monkeypatch.setattr(media_text, "probe_duration_ms", lambda path: 90_000)
+    spent, reason = media_text.extract_one(session, user.id, video)
+    assert reason is None and fake_media.transcripts[0][1] == 1.5 and video.duration_ms == 90_000
+    # ffmpeg's own report is where the length comes from
+    monkeypatch.undo()
+    monkeypatch.setattr(media_text, "ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(media_text.subprocess, "run", lambda *a, **k: SimpleNamespace(stderr="  Duration: 00:01:30.50, start: 0.0"))
+    assert media_text.probe_duration_ms(Path("x.mp4")) == 90_500
+    with pytest.raises(llm.LLMError, match="length"):  # the ledger never gets a $0 transcription
+        llm.transcribe(session, user.id, Path("x.mp3"), "openai/gpt-transcribe", 0)
+
+
+def test_llm_reserves_against_the_cap_while_a_call_runs(session, user, fake_llm):
+    """The estimate is in the ledger before the provider is called, so a call
+    running at the same time counts it; afterwards the row holds the real cost."""
+    seen = []
+
+    def during(kwargs):
+        with SessionLocal() as other:
+            seen.append(llm.month_spend(other, user.id))
+            other.merge(Setting(user_id=user.id, key="llm_monthly_cap_usd", value=llm.COMPLETION_RESERVE_USD * 1.5))
+            other.commit()
+            with pytest.raises(llm.BudgetError):
+                llm.complete(other, user.id, "test", "openai/some-model", [])
+        return reply("hi")
+
+    fake_llm.script = [during]
+    llm.complete(session, user.id, "test", "openai/some-model", [])
+    assert seen == [llm.COMPLETION_RESERVE_USD] and len(fake_llm.calls) == 1
+    row = session.scalars(select(SpendLedger)).one()
+    assert row.amount_usd == Decimal("0.001") and "provisional" not in row.meta
+
+
+def test_ask_saves_sets_under_its_own_prefix(session, user):
+    first = add_item(session, user, "1", "pgvector HNSW tuning notes")
+    add_item(session, user, "2", "sourdough starter schedule")
+    run_query(session, user.id, "where sourdough | as @seeds")
+    mine = session.scalar(select(ResultSet.item_ids).where(ResultSet.name == "seeds"))
+    _, step = ask_module._run_tool(session, user.id, "where pgvector | as @seeds", 0.0)
+    assert step["n"] == 1 and session.scalar(select(ResultSet.item_ids).where(ResultSet.name == "seeds")) == mine
+    assert session.scalar(select(ResultSet.item_ids).where(ResultSet.name == "ask.seeds")) == [first.id]
+    assert ask_module._run_tool(session, user.id, "@seeds | count", 0.0)[1]["n"] == 1  # Ask reads its own set back
+    assert run_query(session, user.id, "@seeds | count")["n"] == 1 and mine != [first.id]  # the user's set is as it was
 
 
 def test_audio_pieces_without_ffmpeg(tmp_path, monkeypatch):
@@ -282,6 +348,13 @@ def test_audio_pieces_without_ffmpeg(tmp_path, monkeypatch):
 
 # --- Tokens, spend, sync, lists ---------------------------------------------
 def test_tokens(client, session, user):
+    # A bearer token cannot mint, list or revoke tokens: that takes the web app's session.
+    assert client.post("/api/tokens", json={"name": "laptop"}).status_code == 403
+    assert client.get("/api/tokens").status_code == 403 and client.delete("/api/tokens/1").status_code == 403
+    bearer, client = client, TestClient(app, headers={"X-Requested-With": "kosha"})
+    auth._login_failures.clear()
+    assert client.post("/api/auth/login", json={"email": "admin@example.test", "password": "test-password"}).status_code == 200
+    bearer.post("/api/lists", json={"name": "x"})  # the env token has been used
     created = client.post("/api/tokens", json={"name": "laptop"})
     assert created.status_code == 201
     secret = created.json()["token"]

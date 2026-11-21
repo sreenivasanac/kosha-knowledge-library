@@ -56,6 +56,7 @@ IMAGE_PROMPT = (
 
 
 NO_AUDIO, SILENT, NO_SPEECH = "no audio track", "the sound track is silent", "no speech found"
+UNKNOWN_LENGTH = "the length of the recording is unknown (install ffmpeg to measure it), so its cost cannot be checked"
 
 
 class ExtractError(RuntimeError):
@@ -96,12 +97,15 @@ def pending(session: Session, user_id: int, item_ids: list[int] | None = None, e
 
 
 def estimate(session: Session, user_id: int, rows: list[ItemMedia]) -> dict:
-    # ponytail: a video whose length the source did not give counts as 0 minutes
-    # here (and in the ledger); probe it with ffprobe if such files turn up.
-    minutes = sum((m.duration_ms or 0) for m in rows if m.type in AUDIO_TYPES) / 60000
+    """`unknown_duration` counts recordings whose length the source did not
+    give: they are not in `minutes` or `estimate_usd` (the file is measured
+    with ffmpeg when its turn comes, and checked against the cap then)."""
+    audio = [m for m in rows if m.type in AUDIO_TYPES]
+    minutes = sum((m.duration_ms or 0) for m in audio) / 60000
     images = sum(m.type in IMAGE_TYPES for m in rows)
     per_minute = llm.STT_PRICE_PER_MINUTE_USD.get(load_settings(session, user_id)["stt_model"], 0.0)
     return {"n_media": len(rows), "minutes": round(minutes, 1), "images": images,
+            "unknown_duration": sum(not m.duration_ms for m in audio),
             "estimate_usd": round(minutes * per_minute + images * IMAGE_ESTIMATE_USD, 4)}
 
 
@@ -147,14 +151,35 @@ def _audio_pieces(video: Path, folder: Path) -> list[Path]:
     return pieces
 
 
+def probe_duration_ms(path: Path) -> int | None:
+    """The length of a media file, read from ffmpeg's `Duration:` line; None
+    without ffmpeg or when it prints none."""
+    ffmpeg = ffmpeg_path()
+    if not ffmpeg:
+        return None
+    run = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-i", str(path)], capture_output=True, text=True, timeout=FFMPEG_TIMEOUT_S)
+    found = re.search(r"Duration: (\d+):(\d\d):(\d\d(?:\.\d+)?)", run.stderr or "")
+    if not found:
+        return None
+    hours, minutes, seconds = found.groups()
+    return round((int(hours) * 3600 + int(minutes) * 60 + float(seconds)) * 1000)
+
+
 def _stamp(seconds: float) -> str:
     return f"{int(seconds) // 60:02d}:{int(seconds) % 60:02d}"
 
 
 def _transcribe(session: Session, user_id: int, media: ItemMedia, folder: Path) -> float:
     model = load_settings(session, user_id)["stt_model"]
-    pieces = _audio_pieces(_fetch(media, folder, VIDEO_MAX_BYTES), folder)
-    minutes = (media.duration_ms or 0) / 60000 / len(pieces)
+    source = _fetch(media, folder, VIDEO_MAX_BYTES)
+    pieces = _audio_pieces(source, folder)
+    # The price is per minute, so the length must be known before the cap is
+    # checked: the source's own figure, else measured from the file, else refused.
+    if not media.duration_ms:
+        media.duration_ms = probe_duration_ms(source)
+    if not media.duration_ms:
+        raise ExtractError(UNKNOWN_LENGTH)
+    minutes = media.duration_ms / 60000 / len(pieces)
     context = " ".join((session.get(Item, media.item_id).body or "").split())[:STT_PROMPT_MAX_CHARS] or None
     texts, lines, timed, spent, lang = [], [], True, 0.0, None
     for n, piece in enumerate(pieces):
