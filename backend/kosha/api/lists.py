@@ -40,7 +40,7 @@ def create_list(body: ListIn, user: User = Depends(current_user), session: Sessi
 @router.get("/lists/{list_id}", response_model=ListDetailOut)
 def one_list(list_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
     row = _list(session, user, list_id)
-    items = session.scalars(select(Item).join(ListItem, ListItem.item_id == Item.id).where(ListItem.list_id == row.id)
+    items = session.scalars(select(Item).join(ListItem, ListItem.item_id == Item.id).where(ListItem.list_id == row.id, Item.user_id == user.id)
                             .order_by(ListItem.position.asc().nulls_last(), ListItem.added_at, Item.id)).all()
     return {**_out(session, row), "items": serialize_items(session, user.id, list(items))}
 

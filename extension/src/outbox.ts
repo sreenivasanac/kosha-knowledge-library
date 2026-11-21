@@ -41,10 +41,12 @@ export function isRetryable(status: number | null): boolean {
   return status === null || status >= 500 || [401, 403, 408, 429].includes(status);
 }
 
+/** The request's result once its transaction has committed: a request can succeed and the transaction still abort. */
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    const tx = req.transaction!;
+    tx.oncomplete = () => resolve(req.result);
+    tx.onabort = tx.onerror = () => reject(tx.error ?? req.error);
   });
 }
 

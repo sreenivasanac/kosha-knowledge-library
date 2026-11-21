@@ -37,3 +37,11 @@ export function displayUrl(url: string, max = 42): string {
     return url;
   }
 }
+
+/** `1.4 GB`: a file size. */
+export function bytes(n: number | null | undefined): string {
+  if (n == null) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = n > 0 ? Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024))) : 0;
+  return `${(n / 1024 ** i).toFixed(i === 0 || n / 1024 ** i >= 100 ? 0 : 1)} ${units[i]}`;
+}

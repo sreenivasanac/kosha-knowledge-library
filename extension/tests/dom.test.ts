@@ -146,6 +146,24 @@ describe('LinkedIn unsave (synthetic fixture)', () => {
     expect(await unsavePost(document, URN1, deps)).toMatchObject({ status: 'failed', abort: true });
   });
 
+  it('does not take a re-rendered card for a removal, nor a card that only embeds the post for the post', async () => {
+    // LinkedIn replaces the card's node; the post is still saved.
+    wireMenu(URN1, ['Unsave'], (card) => card.replaceWith(card.cloneNode(true)));
+    expect(await unsavePost(document, URN1, deps)).toMatchObject({ status: 'failed' });
+
+    // Another saved post reshares URN1: asked for URN1 alone, its menu must not be opened.
+    const [first, second] = findCards(document);
+    first.remove();
+    second.querySelector('.entity-result__content-embedded-object')!.setAttribute('data-chameleon-result-urn', URN1);
+    const own = second.querySelector('.entity-result')!; // its own urn in an attribute read after the embedded one's
+    own.removeAttribute('data-chameleon-result-urn');
+    own.setAttribute('data-urn', URN2);
+    let opened = false;
+    second.querySelector('button.artdeco-dropdown__trigger')!.addEventListener('click', () => (opened = true));
+    expect(await unsavePost(document, URN1, deps)).toMatchObject({ status: 'failed' });
+    expect(opened).toBe(false);
+  });
+
   it('fails when the post stays listed after Unsave', async () => {
     wireMenu(URN1, ['Unsave']);
     expect(await unsavePost(document, URN1, deps)).toMatchObject({ status: 'failed' });
@@ -166,6 +184,18 @@ describe('X un-bookmark (hand-built page)', () => {
     document.getElementById('other')!.addEventListener('click', () => (otherPressed = true));
     expect(await unbookmark(document, '123', noSleep, limits)).toMatchObject({ status: 'removed' });
     expect(otherPressed).toBe(false);
+  });
+
+  it('picks the post by its own permalink, not a post above it that links to it', async () => {
+    document.body.innerHTML =
+      `<article data-testid="tweet"><a href="/q/status/999"><time>2h</time></a><a href="/someone/status/123">quoted</a><button data-testid="removeBookmark" id="quoting"></button></article>` +
+      page('123', 'removeBookmark');
+    let quotingPressed = false;
+    document.getElementById('quoting')!.addEventListener('click', () => (quotingPressed = true));
+    const button = document.querySelectorAll<HTMLElement>('article button')[1];
+    button.addEventListener('click', () => button.setAttribute('data-testid', 'bookmark'));
+    expect(await unbookmark(document, '123', noSleep, limits)).toMatchObject({ status: 'removed' });
+    expect(quotingPressed).toBe(false);
   });
 
   it('does not press anything when the post is not bookmarked', async () => {

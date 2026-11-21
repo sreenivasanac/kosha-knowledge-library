@@ -5,14 +5,20 @@ import { Archive, ArchiveRestore, BookmarkPlus, Captions, ChevronLeft, ChevronRi
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { runAction, setArchived } from './actions';
 import { ArchiveTools, deleteForever } from './ArchiveTools';
-import { api, ApiError, fetchItems, useCapabilities, type Item, type Suggest } from './api';
-import { PAGE_SIZES, SORTS, STORAGE_KEYS, type View } from './constants';
+import { api, ApiError, fetchItems, useCapabilities, useIsDemo, useWhyUnavailable, type Item, type Suggest } from './api';
+import { DEMO_UNAVAILABLE, PAGE_SIZES, SORTS, STORAGE_KEYS, type View } from './constants';
 import { ItemCard } from './ItemCard';
 import { setSearch, withDefaults, type LibrarySearch } from './nav';
 import { hasToken, quoteValue, toggleToken } from './query';
 import { FilterChips, SearchBar } from './SearchBar';
 import { getState, openOverlay, setState, useStore } from './store';
 import { ErrorNote, useHint } from './ui';
+
+/** The server's notice codes in words; anything else it sends is shown as it is. */
+const NOTICE_TEXT: Record<string, string> = {
+  demo_keyword_only: 'The demo searches by keyword only. Search by meaning needs your own server and an embeddings key.',
+  semantic_unavailable: 'Search by meaning is not available right now, so these are keyword results.',
+};
 
 /** The reading column; notices and empty states share it so they line up with the list. */
 export const COLUMN = 'mx-auto max-w-[680px]';
@@ -79,6 +85,7 @@ function TagChips({ q, items }: { q: string; items: Item[] }) {
 }
 
 function BulkBar({ archived }: { archived: boolean }) {
+  const demo = useIsDemo();
   const n = useStore((s) => s.selection.size);
   const total = useStore((s) => s.total);
   const hint = useHint();
@@ -116,7 +123,7 @@ function BulkBar({ archived }: { archived: boolean }) {
           <button className="btn h-8" onClick={() => setArchived([...getState().selection], false)}>
             <ArchiveRestore size={15} /> Restore
           </button>
-          <button className="btn btn-danger h-8 shrink-0" onClick={() => deleteForever([...getState().selection])}>
+          <button className="btn btn-danger h-8 shrink-0" disabled={demo} title={demo ? DEMO_UNAVAILABLE : undefined} onClick={() => deleteForever([...getState().selection])}>
             <Trash2 size={15} /> Delete
           </button>
         </>
@@ -131,6 +138,7 @@ function BulkBar({ archived }: { archived: boolean }) {
 
 function Toolbar({ s, total }: { s: ReturnType<typeof withDefaults>; total: number | undefined }) {
   const caps = useCapabilities();
+  const why = useWhyUnavailable();
   const hint = useHint();
   const views: [View, string, ReactNode][] = [
     ['list', 'List view', <List size={15} />],
@@ -143,7 +151,7 @@ function Toolbar({ s, total }: { s: ReturnType<typeof withDefaults>; total: numb
         {total == null ? '' : `${total.toLocaleString()} item${total === 1 ? '' : 's'}`}
       </span>
       <FilterChips q={s.q} jevQuestion={s.snap ? (s.jq ?? 'result set') : undefined} />
-      <button className="btn btn-ghost px-2" disabled={!caps.jev} title={caps.jev ? 'Ask a yes/no question of every item in this result' : 'Jev check is not available on this server yet'} onClick={() => openOverlay({ kind: 'jev' })}>
+      <button className="btn btn-ghost px-2" disabled={!caps.jev} title={caps.jev ? 'Ask a yes/no question of every item in this result' : why('Jev check')} onClick={() => openOverlay({ kind: 'jev' })}>
         <Sparkles size={15} /> <span className="max-md:sr-only">Jev check</span>
       </button>
       <button className="btn btn-ghost px-2" disabled={!caps.savedViews} title={caps.savedViews ? 'Save this search as a view' : 'Saved views are not available on this server yet'} onClick={() => openOverlay({ kind: 'saveView' })}>
@@ -352,7 +360,7 @@ export function Library({ archived = false }: { archived?: boolean }) {
         {archived && <ArchiveTools />}
         {fresh && data.notice && (
           <p role="status" className={`${COLUMN} mb-3 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-2`}>
-            {data.notice}
+            {NOTICE_TEXT[data.notice] ?? data.notice}
           </p>
         )}
         {query.isPending ? (

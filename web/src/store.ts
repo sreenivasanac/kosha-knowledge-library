@@ -5,7 +5,7 @@
  */
 import { useSyncExternalStore } from 'react';
 import type { Item, Media } from './api';
-import { STORAGE_KEYS, TOAST_MS } from './constants';
+import { DEMO_UNAVAILABLE, STORAGE_KEYS, TOAST_MS } from './constants';
 import { currentSearch, hasDrawer } from './nav';
 
 export type Overlay =
@@ -91,7 +91,9 @@ export function toast(text: string, extra: Partial<Toast> = {}) {
   setState({ toasts: [{ id, text, ...extra }] });
   setTimeout(() => setState({ toasts: getState().toasts.filter((t) => t.id !== id) }), TOAST_MS);
 }
-export const toastError = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { error: true });
+/** A refusal from the demo server is expected, so it is said plainly and not styled as an error. */
+export const isDemoRefusal = (error: unknown) => (error as { code?: string } | null)?.code === 'demo';
+export const toastError = (error: unknown) => (isDemoRefusal(error) ? toast(`${DEMO_UNAVAILABLE}.`) : toast(error instanceof Error ? error.message : String(error), { error: true }));
 
 export function setSidebarOpen(open: boolean) {
   try {

@@ -12,6 +12,9 @@ import { LABELS, SELECTORS } from './selectors.ts';
 
 const POLL_MS = 300;
 
+/** The saved post's own urn, by the rule extractPost uses: a post embedded in the card (a reshare) is not the card's. */
+const cardUrn = (card: Element) => readUrn(card, first(card, SELECTORS.reshared));
+
 export interface UnsaveDeps {
   sleep(ms: number): Promise<void>;
   /** Brings more saved posts into the page (scroll, or the "show more" button). */
@@ -43,7 +46,7 @@ async function findCard(doc: Document, urn: string, deps: UnsaveDeps, limits: ty
   for (let scrolls = 0; ; scrolls++) {
     if (detectBlocker(doc, deps.href())) return 'blocked';
     const cards = findCards(doc);
-    const card = cards.find((c) => readUrn(c) === urn);
+    const card = cards.find((c) => cardUrn(c) === urn);
     if (card) return card;
     unchanged = cards.length === lastCount ? unchanged + 1 : 0;
     lastCount = cards.length;
@@ -104,7 +107,8 @@ export async function unsavePost(doc: Document, urn: string, deps: UnsaveDeps, l
     }
     const stop = blocked();
     if (stop) return stop;
-    if (!card.isConnected || !findCards(doc).some((c) => readUrn(c) === urn)) {
+    // Judged from the list as it is now: LinkedIn may have replaced the card's node while the post is still saved.
+    if (!findCards(doc).some((c) => cardUrn(c) === urn)) {
       return { status: 'removed', detail: 'unsaved' };
     }
   }

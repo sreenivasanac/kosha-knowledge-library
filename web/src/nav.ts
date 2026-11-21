@@ -1,6 +1,7 @@
 /** URL state of the library views, and the few navigation helpers actions need. */
 import type { AnyRouter } from '@tanstack/react-router';
-import { DEFAULT_PAGE_SIZE, DEFAULT_SORT, MODES, PAGE_SIZES, VIEWS, type Mode, type View } from './constants';
+import { DEFAULT_SORT, MODES, PAGE_SIZES, VIEWS, type Mode, type View } from './constants';
+import { preferredPageSize, preferredView } from './prefs';
 
 /** Everything a library view needs is in the URL, so reload and Back restore it. */
 export interface LibrarySearch {
@@ -40,9 +41,9 @@ export const withDefaults = (s: LibrarySearch) => ({
   q: s.q ?? '',
   mode: s.mode ?? 'hybrid',
   sort: s.sort ?? DEFAULT_SORT,
-  view: s.view ?? 'list',
+  view: s.view ?? preferredView(),
   page: s.page ?? 1,
-  size: s.size ?? DEFAULT_PAGE_SIZE,
+  size: s.size ?? preferredPageSize(),
 });
 
 let router: AnyRouter;

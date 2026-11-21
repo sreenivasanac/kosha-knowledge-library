@@ -1,7 +1,9 @@
-"""API tokens, this month's spend, and server-side sync."""
+"""API tokens, this month's spend, server-side sync, and the onboarding checklist."""
 import secrets
 import threading
 from datetime import UTC, datetime
+
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -10,10 +12,10 @@ from sqlalchemy.orm import Session
 
 from kosha import llm
 from kosha.auth import current_user, hash_token, session_user
-from kosha.config import get_settings
+from kosha.config import ONBOARDING_ADMIN_STEPS, ONBOARDING_STATES, ONBOARDING_STEPS, get_settings
 from kosha.db import SessionLocal, get_session
 from kosha.models import ApiToken, SpendLedger, SyncState, User
-from kosha.prefs import load_settings
+from kosha.prefs import ADMIN, load_settings
 from kosha.sync import x_api
 
 router = APIRouter(tags=["account"])
@@ -21,17 +23,20 @@ router = APIRouter(tags=["account"])
 TOKEN_PREFIX = "kosha_"
 TOKEN_BYTES = 32
 # Provider in `spend_ledger` -> the user setting that caps its month.
-SPEND_CAPS = {"x": "x_api_monthly_cap_usd", "jev": "jev_monthly_budget_usd", "llm": "llm_monthly_cap_usd"}
+SPEND_CAPS = {"x": "x_api_monthly_cap_usd", "jev": "jev_monthly_budget_usd", "llm": "llm_monthly_cap_usd",
+              "voyage": "voyage_monthly_cap_usd"}
 # What each cap's `spent_usd` sums, said in the response so it can be read next to the provider totals.
 CAP_COUNTS = {
     "x": "every ledger row of provider x",
     "jev": "every ledger row of provider jev",
     "llm": "the app's own LLM and speech-to-text calls (ledger rows with meta.via = llm, written by kosha/llm.py), "
            "whichever provider served them",
+    "voyage": "every ledger row of provider voyage (embeddings and reranking)",
 }
 SPEND_NOTE = ("A cap's spent_usd is what the app checks before a call. A provider's usd is everything in the ledger for it; "
-              "capped_usd is the part some cap counts. The rest (Voyage embeddings and reranking, and calls that scripts "
-              "made directly, such as docs/experiments runs) is under no cap and listed in uncapped.")
+              "capped_usd is the part some cap counts. The rest (calls that scripts made directly, such as docs/experiments runs) "
+              "is under no cap and listed in uncapped. Each user has their own spend and caps; on a shared server a normal "
+              "user's cap is never above the maximum its admin set.")
 SYNC_SOURCES = (x_api.SYNC_SOURCE,)  # what `POST /api/sync` can run on the server
 
 
@@ -137,6 +142,9 @@ def start_sync(body: SyncIn, user: User = Depends(current_user), session: Sessio
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"source must be one of: {', '.join(SYNC_SOURCES)}")
     if not load_settings(session, user.id)["x_api_sync_enabled"]:
         return {"source": body.source, "status": "disabled", "reason": "The setting x_api_sync_enabled is off."}
+    if user.role != ADMIN:
+        return {"source": body.source, "status": "not_configured",
+                "reason": "The X API credentials of this server belong to its admin. Capture your bookmarks with the browser extension."}
     env = get_settings()
     missing = [name for name, value in (("KOSHA_X_ACCESS_TOKEN", env.kosha_x_access_token), ("KOSHA_X_USER_ID", env.kosha_x_user_id)) if not value]
     if missing:
@@ -154,3 +162,42 @@ def start_sync(body: SyncIn, user: User = Depends(current_user), session: Sessio
     _sync_threads[key] = threading.Thread(target=work, name="kosha-sync", daemon=True)
     _sync_threads[key].start()
     return {"source": body.source, "status": "started"}
+
+
+# --- Onboarding -------------------------------------------------------------
+class OnboardingPatch(BaseModel):
+    step: Literal[ONBOARDING_STEPS]  # type: ignore[valid-type]
+    state: Literal[ONBOARDING_STATES]  # type: ignore[valid-type]
+
+
+def _onboarding(user: User) -> dict:
+    """`{completed, steps}`; a step is `todo` until the user finishes or skips
+    it. The steps that set up the instance (API keys, storage) are an admin's:
+    a normal user sees them as `not_applicable`."""
+    stored = {"account": "done", **(user.onboarding or {})}  # whoever is signed in has an account
+    return {"completed": user.onboarding_completed,
+            "steps": {step: "not_applicable" if step in ONBOARDING_ADMIN_STEPS and user.role != ADMIN else stored.get(step, "todo")
+                      for step in ONBOARDING_STEPS}}
+
+
+@router.get("/onboarding")
+def get_onboarding(user: User = Depends(current_user)) -> dict:
+    """`{completed, steps: {account, sources, ai, media, look}}`, each `done`, `skipped`, `todo` or `not_applicable`."""
+    return _onboarding(user)
+
+
+@router.patch("/onboarding")
+def patch_onboarding(body: OnboardingPatch, user: User = Depends(current_user), session: Session = Depends(get_session)) -> dict:
+    if body.step in ONBOARDING_ADMIN_STEPS and user.role != ADMIN:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"The {body.step} step is the admin's")
+    user.onboarding = {**(user.onboarding or {}), body.step: body.state}
+    session.commit()
+    return _onboarding(user)
+
+
+@router.post("/onboarding/complete")
+def complete_onboarding(user: User = Depends(current_user), session: Session = Depends(get_session)) -> dict:
+    """The user is through (or closed it): the web app stops opening it."""
+    user.onboarding_completed = True
+    session.commit()
+    return _onboarding(user)

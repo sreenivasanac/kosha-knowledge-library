@@ -1,0 +1,40 @@
+retrieval augmented generation
+RAG chunking strategies
+vector database
+embeddings explained
+fine-tuning a small model
+LoRA
+running models locally
+local LLM on a Mac
+GPU for inference
+AI coding agents
+Claude Code tips
+Cursor workflow
+MCP server
+agent memory
+multi-agent systems
+tool calling
+prompt engineering
+evals for LLM apps
+structured output
+open source alternatives
+self-hosted tools
+voice agents
+speech to text
+text to speech
+image generation
+video generation
+computer vision
+robot arm
+humanoid robots
+3D printing
+game built with AI
+three.js
+frontend design
+tailwind components
+system design
+databases and Postgres
+Rust
+Python tooling
+research paper summary
+transformer explained

@@ -64,7 +64,48 @@ class User(Base):
     id: Mapped[int] = _pk()
     email: Mapped[str] = mapped_column(Text, unique=True)
     password_hash: Mapped[str] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(Text, server_default="user")  # admin, user
+    disabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
+    last_login_at: Mapped[datetime | None] = mapped_column(TZ)
+    onboarding_completed: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    onboarding: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'"))  # step -> done | skipped
+
+
+class AuthLink(Base):
+    """Single-use links an admin hands out: an invite to sign up, or a
+    password reset for one user. Only the SHA-256 of the token is stored."""
+
+    __tablename__ = "auth_links"
+    id: Mapped[int] = _pk()
+    kind: Mapped[str] = mapped_column(Text)  # invite, reset
+    token_hash: Mapped[str] = mapped_column(Text, unique=True)
+    # reset: whose password; invite: who signed up with it (set when used)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
+    expires_at: Mapped[datetime] = mapped_column(TZ)
+    used_at: Mapped[datetime | None] = mapped_column(TZ)
+
+
+class InstanceSetting(Base):
+    """Settings of the whole instance, set by an admin: `signups`, `landing`,
+    `caps`, and the API keys (`key:<name>`, encrypted; kosha/keys.py)."""
+
+    __tablename__ = "instance_settings"
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSONB)
+
+
+class DemoQueryVector(Base):
+    """Demo mode only: the vectors of the suggested searches, computed when the
+    bundle was built, so a demo never calls the embedding API."""
+
+    __tablename__ = "demo_query_vectors"
+    query: Mapped[str] = mapped_column(Text, primary_key=True)  # trimmed, lower case
+    model: Mapped[str] = mapped_column(Text, primary_key=True)
+    vector: Mapped[list[float]] = mapped_column(HALFVEC(EMBEDDING_DIM))
 
 
 class ApiToken(Base):

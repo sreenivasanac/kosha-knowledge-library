@@ -51,6 +51,17 @@ def _commit(session: Session) -> None:
         raise HTTPException(status.HTTP_409_CONFLICT, "A tag with this name already exists here") from None
 
 
+TREE_LOCK_KEY = 0x4B54  # first key of the per-user advisory lock around changes to the tag tree
+
+
+def lock_tree(session: Session, user_id: int) -> None:
+    """Serialise changes to one user's tag tree (create, move, merge, delete)
+    until the transaction ends. Take it before reading the tags the change
+    depends on: then a cycle check, a parent's path and a "has no children"
+    check all see what a concurrent change committed."""
+    session.execute(text("SELECT pg_advisory_xact_lock(:key, :user)"), {"key": TREE_LOCK_KEY, "user": user_id})
+
+
 def is_within(path: str, ancestor_path: str) -> bool:
     return path == ancestor_path or path.startswith(ancestor_path + ".")
 
@@ -140,6 +151,7 @@ def tag_tree(
 
 @router.post("/tags", response_model=TagOut, status_code=status.HTTP_201_CREATED)
 def create_tag(body: TagCreate, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    lock_tree(session, user.id)
     parent = get_tag(session, user, body.parent_id) if body.parent_id else None
     tag_id = session.scalar(tags_id_seq)
     tag = Tag(
@@ -169,6 +181,7 @@ def update_tag(tag_id: int, body: TagPatch, user: User = Depends(current_user), 
 
 @router.post("/tags/{tag_id}/move", response_model=TagOut)
 def move(tag_id: int, body: TagMove, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    lock_tree(session, user.id)
     tag = get_tag(session, user, tag_id)
     try:
         move_tag(session, tag, get_tag(session, user, body.parent_id) if body.parent_id else None)
@@ -215,6 +228,7 @@ def merge_tags(session: Session, user: User, tag: Tag, into: Tag, restore_remove
 def merge(tag_id: int, body: TagMerge, user: User = Depends(current_user), session: Session = Depends(get_session)):
     """Fold this tag into another: its items and child tags move over, then it
     is deleted. Where an item carries both, the target's row is kept."""
+    lock_tree(session, user.id)
     merge_tags(session, user, get_tag(session, user, tag_id), get_tag(session, user, body.into_id))
     return tag_out(get_tag(session, user, body.into_id))
 
@@ -223,6 +237,7 @@ def merge(tag_id: int, body: TagMerge, user: User = Depends(current_user), sessi
 def delete_tag(tag_id: int, recursive: bool = False, user: User = Depends(current_user), session: Session = Depends(get_session)):
     """Delete a tag and detach it from its items. A tag with children is only
     deleted (with its whole subtree) when `recursive=true`."""
+    lock_tree(session, user.id)
     tag = get_tag(session, user, tag_id)
     if not recursive and session.scalar(select(Tag.id).where(Tag.parent_id == tag.id).limit(1)):
         raise HTTPException(status.HTTP_409_CONFLICT, "Tag has child tags; pass recursive=true to delete them too")

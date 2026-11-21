@@ -7,15 +7,21 @@ import { REMOVAL, X } from '../config.ts';
 import type { RemovalOutcome } from '../removal/queue.ts';
 
 const POLL_MS = 300;
+const PERMALINK = 'a[href*="/status/"]:has(time)';
 
 /** The post with this id among those on the page (replies below it have other ids). */
 function findPost(doc: Document, postId: string): Element | null {
-  for (const post of doc.querySelectorAll(X.selectors.post)) {
-    for (const link of post.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]')) {
-      if (new RegExp(`/status/${postId}(?:[/?#]|$)`).test(link.getAttribute('href') ?? '')) return post;
-    }
-  }
-  return null;
+  const own = new RegExp(`/status/${postId}(?:[/?#]|$)`);
+  const posts = [...doc.querySelectorAll(X.selectors.post)];
+  const linksTo = (post: Element, selector: string) =>
+    [...post.querySelectorAll<HTMLAnchorElement>(selector)].some((link) => own.test(link.getAttribute('href') ?? ''));
+  // A post's permalink is the link around its time stamp. Any other link to the id (a quoted post, a
+  // link in the text) counts only when no post on the page has it as its permalink.
+  return (
+    posts.find((post) => linksTo(post, PERMALINK)) ??
+    posts.find((post) => !post.querySelector(PERMALINK) && linksTo(post, 'a[href*="/status/"]')) ??
+    null
+  );
 }
 
 async function waitFor<T>(read: () => T | null, timeoutMs: number, sleep: (ms: number) => Promise<void>): Promise<T | null> {

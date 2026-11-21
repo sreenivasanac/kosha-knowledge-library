@@ -1,5 +1,5 @@
 # Kosha: the app (API server + web app, one container) and Postgres with pgvector.
-#   cp .env.example .env   # then set the three required values
+#   cp .env.example .env   # then set KOSHA_SECRET_KEY
 #   docker compose up -d   # http://localhost:8080
 name: kosha
 
@@ -30,8 +30,8 @@ services:
       KOSHA_MEDIA_DIR: /data/media
       # Fail with a clear message instead of starting half-configured.
       KOSHA_SECRET_KEY: ${KOSHA_SECRET_KEY:?set KOSHA_SECRET_KEY in .env}
-      KOSHA_ADMIN_EMAIL: ${KOSHA_ADMIN_EMAIL:?set KOSHA_ADMIN_EMAIL in .env}
-      KOSHA_ADMIN_PASSWORD: ${KOSHA_ADMIN_PASSWORD:?set KOSHA_ADMIN_PASSWORD in .env}
+      # KOSHA_ADMIN_EMAIL / KOSHA_ADMIN_PASSWORD are optional (read from .env when set):
+      # without them the first visitor creates the admin on the setup screen.
     ports:
       # This machine only. Put a reverse proxy with HTTPS in front to expose it (deploy/README.md).
       - "127.0.0.1:${KOSHA_PORT:-8080}:8000"

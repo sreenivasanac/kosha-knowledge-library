@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import ColumnElement, and_, case, delete, func, literal, literal_column, or_, select, text, true
 from sqlalchemy.orm import Session, aliased
 
+from kosha.config import get_settings
 from kosha.items_query import fetch_page
 from kosha.models import Item, ItemEmbedding, ResultSet, SearchHistory
 from kosha.search.embeddings import DOC_MODEL, EmbeddingError, query_vector
@@ -209,7 +210,8 @@ def _similar_vector(session: Session, user_id: int, similar: str):
             raise QueryError(f"No result set named {similar}", 0)
     else:
         ids = [int(similar)]
-    scope = (other.item_id.in_(ids), other.model == DOC_MODEL)
+    # Only the user's own items: another user's item id must not rank this library by its vector.
+    scope = (other.item_id.in_(select(Item.id).where(Item.user_id == user_id, Item.id.in_(ids))), other.model == DOC_MODEL)
     if not session.scalar(select(func.count()).select_from(other).where(*scope)):
         raise QueryError(f"similar:{similar} has no embedding yet", 0)
     return select(func.avg(other.vector)).where(*scope).scalar_subquery()
@@ -245,7 +247,8 @@ def rank_all(session: Session, user_id: int, query: Query, mode: str, extra_wher
             except EmbeddingError:
                 if mode == "semantic":
                     raise
-                notice = "semantic_unavailable"  # hybrid falls back to keyword alone
+                # hybrid falls back to keyword alone; in the demo that is expected for any text but the suggested searches
+                notice = "demo_keyword_only" if get_settings().kosha_demo else "semantic_unavailable"
         if query.similar:
             exclude = int(query.similar) if query.similar.isdigit() else None
             similar_hits = semantic_rank(session, where, _similar_vector(session, user_id, query.similar), exclude, SIMILAR_TOP_N)
@@ -348,7 +351,15 @@ def search(session: Session, user_id: int, q: str, *, mode: str | None = None, s
         if snapshot is None:
             result["refreshed"] = snapshot_id is not None
             if ranked:
-                ids, scores, result["notice"], strong = rank_all(session, user_id, query, mode, extra_where)
+                try:
+                    ids, scores, result["notice"], strong = rank_all(session, user_id, query, mode, extra_where)
+                except EmbeddingError:
+                    if not (get_settings().kosha_demo and query.rank_text):
+                        raise
+                    # The demo has no vector for this text: a by-meaning search is answered by keywords, and says so.
+                    mode = result["mode"] = "keyword"
+                    ids, scores, _, strong = rank_all(session, user_id, query, mode, extra_where)
+                    result["notice"] = "demo_keyword_only"
                 if rerank != "none" and query.rank_text:
                     try:
                         ids, judged = rerank_ids(session, user_id, query.rank_text, ids, rerank)

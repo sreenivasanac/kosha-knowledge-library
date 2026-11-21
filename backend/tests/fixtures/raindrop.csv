@@ -1,0 +1,4 @@
+id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
+101,"Postgres, the good parts","Read before the migration","A tour of features people overlook.",https://example.com/postgres-good-parts,Tech/Databases,"databases, postgres",2024-03-01T10:00:00.000Z,https://example.com/cover.png,,true
+102,Sourdough at home,,,https://example.com/sourdough,Cooking,baking,2024-03-02T08:30:00.000Z,,,false
+103,No address,,,,Cooking,,2024-03-03T08:30:00.000Z,,,false

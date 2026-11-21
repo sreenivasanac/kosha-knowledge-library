@@ -175,6 +175,13 @@ def test_filters(session, user, library, q, expected):
     assert found(session, user, q) == expected
 
 
+def test_field_scoped_terms_stay_filters_in_ranked_modes(session, user, library):
+    """`title:rag` must not be handed to the rankers alone: the semantic one cannot see the field."""
+    lifted = lambda q: set(session.scalars(select(Item.id).where(*compile_filter(session, user.id, parse(q), lift_rank_atoms=True))))  # noqa: E731
+    assert lifted("title:rag") == {library["rag"]} and lifted("note:todo retrieval") == {library["video"]}
+    assert len(lifted("rag")) == 6  # a bare word still only ranks
+
+
 def test_id_list_set_and_compile_errors(session, user, library, client):
     session.info["library"] = library
     assert found(session, user, f"id:{library['pg']},{library['repo']}") == {"pg", "repo"}

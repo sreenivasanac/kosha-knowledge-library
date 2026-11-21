@@ -77,13 +77,19 @@ export function ArchiveTools() {
   const ping = useQuery({ queryKey: ['extension-ping'], queryFn: () => askExtension(MESSAGES.ping), staleTime: 0 });
   const [progress, setProgress] = useState<RemovalProgress | null>(null);
   const running = progress?.status === 'running';
+  /** The extension stopped answering during a run, so how far it is cannot be known. */
+  const [silent, setSilent] = useState(false);
 
   // While a run is going, ask the extension how far it is.
   useEffect(() => {
     if (!running) return;
     const timer = setInterval(async () => {
       const reply = await askExtension(MESSAGES.status);
+      // No answer: keep asking (and keep a new run blocked) until the extension is back.
+      setSilent(!reply);
       if (reply?.removal) setProgress(reply.removal);
+      // It answers but has no run: the run was lost (the extension was reloaded), so a new one may start.
+      else if (reply?.ok) setProgress((p) => p && { ...p, status: 'error', note: 'the extension no longer has this run' });
       if (reply?.removal && reply.removal.status !== 'running') invalidateLibrary();
     }, REMOVAL_POLL_MS);
     return () => clearInterval(timer);
@@ -122,7 +128,7 @@ export function ArchiveTools() {
         <div className="space-y-1.5 text-sm" role="status" aria-live="polite">
           <progress className="h-2 w-full accent-(--accent)" max={Math.max(progress.total, 1)} value={progress.done} aria-label="Removal progress" />
           <p>
-            {running ? `Removing ${progress.done} of ${progress.total}…` : progress.status === 'error' ? `Stopped: ${progress.note ?? 'error'}` : 'Finished.'} {progress.removed} removed, {progress.already_gone} already gone, {progress.failed} failed
+            {running && silent ? `The extension stopped answering, so the state of this run is not known (last seen: ${progress.done} of ${progress.total}). Still checking; if this stays, reload the extension in chrome://extensions.` : running ? `Removing ${progress.done} of ${progress.total}…` : progress.status === 'error' ? `Stopped: ${progress.note ?? 'error'}` : 'Finished.'} {progress.removed} removed, {progress.already_gone} already gone, {progress.failed} failed
             {progress.deferred ? `, ${progress.deferred} left for the next run` : ''}
             {progress.unreported ? `, ${progress.unreported} not reported to the server` : ''}.
           </p>

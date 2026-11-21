@@ -16,6 +16,7 @@ from kosha.db import get_session
 from kosha.items_query import STABLE_ORDER
 from kosha.models import Item, ResultSet, User
 from kosha.pipeline import run_query
+from kosha.pipeline.executor import ServiceUnavailable
 from kosha.search import engine
 from kosha.search.embeddings import EmbeddingError
 from kosha.search.query import QueryError, compile_filter, parse
@@ -49,6 +50,9 @@ def query(body: QueryIn, user: User = Depends(current_user), session: Session = 
     An error is a 422 with `{detail: {message, position}}`."""
     try:
         return run_query(session, user.id, body.q, body.confirm, body.run)
+    except ServiceUnavailable as exc:  # e.g. a `jev` stage on a server without a TypeSafe key
+        session.rollback()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, exc.as_dict()) from None
     except QueryError as exc:
         session.rollback()
         raise _query_error(exc) from None

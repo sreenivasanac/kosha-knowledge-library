@@ -2,7 +2,9 @@
 
 Kosha is a self-hosted library for the things you save: X bookmarks and LinkedIn saved posts today, any web page through its API. It keeps a copy of each item on your own server, lets you organise them in a tag tree, and searches them by keyword and by meaning. An MCP server gives an agent the same search, tagging and question-answering tools that the web app uses.
 
-It is built for one person and one account. It is under construction: it works on a library of about 8,000 items, but it has had one user.
+![The landing page: the headline, and the library as compact rows with the tag tree](docs/screenshots/landing.png)
+
+Each person on a server has their own library. It is under construction: it works on a library of about 8,000 items, but it has had one user.
 
 ## Screenshots
 
@@ -12,11 +14,14 @@ It is built for one person and one account. It is under construction: it works o
 | ![A search with qualifier chips](docs/screenshots/search-chips.png) Search with qualifiers, compact rows | ![The reader drawer](docs/screenshots/reader-drawer.png) Reader drawer |
 | ![Ask](docs/screenshots/ask.png) Ask: an answer with the items it cites | ![Proposed tags review](docs/screenshots/proposed-review.png) Reviewing proposed tags |
 | ![Command palette](docs/screenshots/command-palette.png) Command palette | ![Tag picker](docs/screenshots/tag-picker.png) Tag picker |
+| ![The setup guide](docs/screenshots/onboarding.png) Setup guide | ![Admin settings](docs/screenshots/admin-users.png) Admin: users, sign-up, API keys |
 
 ## Features
 
 - **Capture.** A Chrome extension copies your X bookmarks and LinkedIn saved posts to the server while you browse them. The server parses the raw data, so a change at the source is fixed without capturing again.
-- **Stored media.** Photos and video previews are kept locally. Storing whole videos is optional.
+- **Import and export.** Import a browser bookmarks file, a Raindrop export or any CSV with a `url` column. Export everything, or any search, as CSV, bookmarks HTML or JSON.
+- **Stored media.** Photos and video previews are kept on the server's disk or in an S3-compatible bucket. Storing whole videos is optional.
+- **Accounts.** The first person creates the admin account. Others join by invite, or freely if the admin opens sign-up.
 - **Search.** One search bar with qualifiers (`from:`, `#tag`, `type:video`, `saved:2026-03..`, `likes:>100`, `is:untagged` and more), in three modes: keyword, semantic, and both fused.
 - **Tags.** A tag tree with primary and secondary tags per item. Tags an agent proposes stay "proposed" until you approve or reject them, one by one or a whole subtree at once.
 - **Lists and saved views.** Hand-ordered lists of items, and searches saved by name.
@@ -34,7 +39,7 @@ It is built for one person and one account. It is under construction: it works o
 Chrome extension ──raw captures──▶ ┌──────────────────────────┐
 (X and LinkedIn pages)             │ Backend (FastAPI)        │ ──▶ Postgres
                                    │  parse, store, search    │     (pgvector, pg_trgm, ltree)
-Web app (React) ──── /api ───────▶ │  pipelines, Ask, jobs    │ ──▶ media files on disk
+Web app (React) ──── /api ───────▶ │  pipelines, Ask, jobs    │ ──▶ media files (disk or S3)
 MCP client ───────── /mcp ───────▶ │                          │ ──▶ optional paid APIs
                                    └──────────────────────────┘     (embeddings, classifier, LLM, X API)
 ```
@@ -42,7 +47,35 @@ MCP client ───────── /mcp ───────▶ │        
 - `backend/`: Python 3.12, FastAPI, SQLAlchemy, Alembic. One process serves the API, the MCP endpoint and the built web app.
 - `web/`: React, TypeScript, Vite, Tailwind.
 - `extension/`: a Chrome extension (Manifest V3), TypeScript.
-- `docs/`: [design](docs/DESIGN.md), [search design](docs/SEARCH_DESIGN.md), [capture contract](docs/CAPTURE_CONTRACT.md), [MCP](docs/MCP.md).
+- `docs/`: [design](docs/DESIGN.md), [search design](docs/SEARCH_DESIGN.md), [capture contract](docs/CAPTURE_CONTRACT.md), [MCP](docs/MCP.md), [running a demo](docs/DEMO.md).
+
+## Accounts
+
+- **The first account.** On a new server the first person to open the web app gets a setup screen and creates the admin account there. To skip that screen, set `KOSHA_ADMIN_EMAIL` and `KOSHA_ADMIN_PASSWORD` in `.env`: that admin is then created (or updated) from them. Set them when others can reach the address before you do.
+- **Sign-up modes.** The admin chooses one in Settings → Admin → Instance: *closed* (only an admin creates accounts; the default), *by invite link*, or *open* (anyone who reaches the server can sign up).
+- **Invites.** An invite link lets one person create their own account. It works once and expires after 7 days by default. Creating one while sign-up is closed switches it to "by invite"; revoking invites does not switch it back.
+- **Admin.** An admin creates, disables and deletes accounts, makes password-reset links (there is no email), sets the API keys for everyone, and chooses where media is stored. Each person's items, tags, lists, settings and API tokens are their own.
+
+## Setup guide
+
+After the first sign-in a short guide asks four things, each of which can be skipped and changed later in Settings: connect sources (the extension, an import file), AI keys and budgets (admin only), media and storage, and look and keyboard. Settings has a "Setup guide" button to go through it again.
+
+## Media storage
+
+Media is stored under `KOSHA_MEDIA_DIR` on the server's disk by default. It can instead go to any S3-compatible store (AWS S3, Cloudflare R2, Backblaze B2, Hetzner, Garage, MinIO, SeaweedFS). Set the `KOSHA_S3_*` variables in `.env`, or let an admin change it in Settings → Admin → Storage, which also tests the connection and copies existing files across. The bucket can stay private (the app streams the files) or serve them through short-lived addresses.
+
+## Media text
+
+Transcripts for video and audio, and descriptions for images. With a DeepInfra key set, transcripts use Whisper large-v3-turbo there by default; without one they use OpenAI. A speech filter runs on the server first, so recordings without speech are not sent. You see the number of files, the minutes and the cost before a run starts. The measurements behind these choices are in [transcription_2026-11-21](docs/experiments/transcription_2026-11-21.md).
+
+## Import and export
+
+- **Import** (Settings → Import and export): a bookmarks HTML file (browsers, Raindrop, Pocket), a Raindrop CSV, or any CSV with a `url` column. Kosha shows what it found first; nothing is saved until you confirm. Duplicates are skipped, and the pages are not fetched.
+- **Export**: everything, or only what a search finds, as CSV, bookmarks HTML or JSON. CSV and HTML open in other bookmark tools; JSON holds every field. "Export the current search" in the command palette fills in the search you are looking at.
+
+## Demo mode
+
+A demo is a separate instance with its own database, one published account and a nightly reset. Sign-up, tokens, captures, paid AI calls, permanent delete and the admin pages are refused there. [docs/DEMO.md](docs/DEMO.md) says how to build and run one. Set `KOSHA_DEMO_URL` on your main instance to link the demo from the landing page.
 
 ## Quick start
 
@@ -55,17 +88,19 @@ You need Postgres 17 with the `vector` (pgvector), `pg_trgm` and `ltree` extensi
    | Variable | Purpose |
    |---|---|
    | `DATABASE_URL` | The Postgres URL, with the `postgresql+psycopg://` scheme |
-   | `KOSHA_SECRET_KEY` | Signs the session cookie |
-   | `KOSHA_ADMIN_EMAIL`, `KOSHA_ADMIN_PASSWORD` | The single account |
-   | `KOSHA_API_TOKEN` | Bearer token for the extension and MCP clients |
+   | `KOSHA_SECRET_KEY` | Signs the session cookie and encrypts API keys saved in the app |
+   | `KOSHA_ADMIN_EMAIL`, `KOSHA_ADMIN_PASSWORD` | Optional. The admin account; without them the first visitor creates it on the setup screen |
+   | `KOSHA_API_TOKEN` | Optional. The admin's bearer token for the extension and MCP clients; tokens can also be made in Settings |
    | `KOSHA_COOKIE_SECURE` | Set `false` when you use plain http on your own machine |
-   | `KOSHA_MEDIA_DIR` | Optional. Where media is stored |
+   | `KOSHA_MEDIA_DIR` | Optional. Where media is stored on disk |
    | `VOYAGE_API_KEY` | Optional. Embeddings for semantic search; without it search is keyword-only |
    | `TYPESAFE_API_KEY` | Optional. The Jev yes/no classifier used by pipelines |
-   | `OPENAI_API_KEY` | Optional. Ask, transcripts and image descriptions |
+   | `OPENAI_API_KEY` | Optional. Ask, image descriptions, and transcripts when no DeepInfra key is set |
+   | `DEEPINFRA_API_KEY` | Optional. Transcripts with Whisper large-v3-turbo |
+   | `KOSHA_LANDING` | Optional. `true` shows the landing page to signed-out visitors |
    | `KOSHA_X_ACCESS_TOKEN`, `KOSHA_X_USER_ID` | Optional. The official X API bookmark sync |
 
-   The full list is in [backend/README.md](backend/README.md).
+   The full list is in [backend/README.md](backend/README.md), and [.env.example](.env.example) has every variable with a comment. An admin can also save the API keys in Settings → Admin.
 
 3. **Backend.**
 
@@ -73,7 +108,7 @@ You need Postgres 17 with the `vector` (pgvector), `pg_trgm` and `ltree` extensi
    cd backend
    uv sync
    uv run kosha migrate        # create the schema
-   uv run kosha create-admin   # the account and the API token, from .env
+   uv run kosha create-admin   # optional: the admin account and the API token, from .env
    ```
 
 4. **Web app.**
@@ -91,7 +126,7 @@ You need Postgres 17 with the `vector` (pgvector), `pg_trgm` and `ltree` extensi
    uv run kosha serve          # http://127.0.0.1:8000
    ```
 
-   Open `http://127.0.0.1:8000` and sign in. For work on the web app, run `pnpm dev` in `web/` instead and open `http://localhost:5173`.
+   Open `http://127.0.0.1:8000` and sign in, or create the admin account on the setup screen. For work on the web app, run `pnpm dev` in `web/` instead and open `http://localhost:5173`.
 
 6. **Extension.**
 
@@ -113,7 +148,29 @@ You need Postgres 17 with the `vector` (pgvector), `pg_trgm` and `ltree` extensi
 
    The tools and the pipeline grammar are in [docs/MCP.md](docs/MCP.md).
 
-There is a `docker-compose.yml`, but it has not been tested.
+## Run with Docker
+
+The quickest way to try Kosha: Docker with Compose is all you need. It runs two containers, Postgres with pgvector and the app (the API, the MCP endpoint and the built web app).
+
+```sh
+git clone <this repository> kosha && cd kosha
+cp .env.example .env        # set KOSHA_SECRET_KEY (KOSHA_ADMIN_EMAIL and KOSHA_ADMIN_PASSWORD are optional)
+docker compose up -d        # the first build takes a minute or two
+```
+
+Open `http://localhost:8080`. With `KOSHA_ADMIN_EMAIL` and `KOSHA_ADMIN_PASSWORD` set in `.env`, sign in with them: the account is created on every start, so changing the password in `.env` and running `docker compose up -d` again updates it. Without them, the first visitor gets the setup screen and creates the admin account there. The schema is created on every start. No API key is needed: without them search is keyword-only, and Ask, Jev and media text are unavailable (`.env.example` says which key turns on what).
+
+```sh
+docker compose logs -f app                 # the server log
+docker compose exec app kosha summarize    # any `kosha` command (see backend/README.md)
+docker compose up -d --build               # after pulling new code
+docker compose down                        # stop; the data stays
+docker compose down -v                     # stop and delete the database and the media
+```
+
+- The data lives in two named volumes: `kosha_pgdata` (the database) and `kosha_media` (stored media).
+- The app listens on this machine only (`127.0.0.1:8080`); set `KOSHA_PORT` in `.env` for another port. To reach it from elsewhere, put a reverse proxy with HTTPS in front and set `KOSHA_COOKIE_SECURE=true` ([deploy/](deploy/README.md) has an nginx example).
+- For the extension and MCP clients, the server URL is `http://localhost:8080` and the token is `KOSHA_API_TOKEN` from `.env`.
 
 ## How capture works, and its risks
 
@@ -140,6 +197,7 @@ Each write-up in `docs/experiments/` records one measurement on a real library. 
 - [labeling](docs/experiments/labeling_2026-11-21.md): five ways for an agent to build a tag tree and label the library, compared against an LLM reference ([the 200 reference items](docs/experiments/labeling_reference_200.json)).
 - [summaries](docs/experiments/summaries_2026-11-21.md): five summary recipes compared; rule-built summaries stay the default and LLM summaries are not written.
 - [media_text](docs/experiments/media_text_2026-11-21.md): transcripts and image descriptions on 14 real media files: quality, cost and the size of a full run.
+- [transcription](docs/experiments/transcription_2026-11-21.md): DeepInfra Whisper turbo against OpenAI on 20 clips, and the speech filter that runs first.
 
 ## Credits
 

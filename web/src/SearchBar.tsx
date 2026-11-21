@@ -115,7 +115,10 @@ export function SearchBar({ q, mode, error, leftover }: { q: string; mode: Mode;
     }));
   }
   const open = focused && options.length > 0;
+  // Suggestions still shown from the text or caret before the last keystroke carry that text's range: they wait for their own answer.
+  const outdated = !!text && suggest.isPlaceholderData;
   const accept = (i: number) => {
+    if (outdated) return;
     options[i]?.apply();
     setActive(-1);
   };
@@ -181,7 +184,7 @@ export function SearchBar({ q, mode, error, leftover }: { q: string; mode: Mode;
             </button>
           )}
           {open && (
-            <ul id="search-options" role="listbox" className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-auto rounded-lg border border-line bg-surface py-1 shadow-pop">
+            <ul id="search-options" role="listbox" aria-busy={outdated} className={`absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-auto rounded-lg border border-line bg-surface py-1 shadow-pop ${outdated ? 'opacity-60' : ''}`}>
               {options.map((o, i) => (
                 <li
                   key={i}

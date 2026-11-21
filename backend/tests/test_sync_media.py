@@ -62,6 +62,7 @@ def test_sync_stops_at_monthly_cap_and_after_stale_pages(session, user):
     client, calls = mock_api([api_page(["2", "1"], "t1"), api_page(["0"])])
     assert sync_bookmarks(session, user.id, client)["status"] == "cap_reached" and len(calls) == 1
 
+    session.delete(session.get(SyncState, (user.id, "x_api")))  # a separate case: no walk to resume
     enable(session, user, cap=3.0)
     empty = [api_page([], f"t{i}") for i in range(5)]
     client, calls = mock_api(empty)

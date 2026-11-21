@@ -9,13 +9,17 @@ import time
 from collections import OrderedDict
 from decimal import Decimal
 
+from datetime import UTC, datetime
+
 import httpx
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from kosha.config import EMBEDDING_DIM, get_settings
-from kosha.models import ItemEmbedding, SpendLedger
+from kosha.keys import get_key
+from kosha.models import DemoQueryVector, ItemEmbedding, SpendLedger
+from kosha.prefs import load_settings
 from kosha.summaries import RULE_METHODS
 
 # --- Tunables ---------------------------------------------------------------
@@ -80,7 +84,9 @@ def document_text(row) -> str:
 def embed_texts(texts: list[str], model: str, input_type: str, client: httpx.Client | None = None) -> tuple[list[list[float]], int]:
     """One Voyage request, retried on rate limits and server errors.
     Returns (vectors in input order, tokens billed)."""
-    key = get_settings().voyage_api_key
+    if get_settings().kosha_demo:  # the demo never calls the embedding API, whoever asks
+        raise EmbeddingError("Not available in the demo")
+    key = get_key("voyage")
     if not key:
         raise EmbeddingError("VOYAGE_API_KEY is not set")
     payload = {"input": texts, "model": model, "input_type": input_type,
@@ -102,6 +108,19 @@ def embed_texts(texts: list[str], model: str, input_type: str, client: httpx.Cli
         if attempt < MAX_RETRIES - 1:
             time.sleep(RETRY_BASE_S * 2 ** attempt)
     raise EmbeddingError(f"Voyage still failing after {MAX_RETRIES} tries ({error})")
+
+
+def check_cap(session: Session, user_id: int) -> None:
+    """Refuse a Voyage call once the user's month is at `voyage_monthly_cap_usd`
+    (for a normal user never above the instance's maximum; kosha/prefs.py).
+    ponytail: checked before the call, not reserved, so one batch can pass the
+    cap by its own cost (a full batch is about $0.006)."""
+    cap = load_settings(session, user_id)["voyage_monthly_cap_usd"]
+    start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    spent = float(session.scalar(select(func.coalesce(func.sum(SpendLedger.amount_usd), 0)).where(
+        SpendLedger.user_id == user_id, SpendLedger.provider == PROVIDER, SpendLedger.created_at >= start)))
+    if spent >= cap:
+        raise EmbeddingError(f"The monthly Voyage cap is reached (${spent:.2f} of ${cap:.2f}; setting voyage_monthly_cap_usd)")
 
 
 def record_spend(session: Session, user_id: int, model: str, operation: str, tokens: int, **meta) -> Decimal:
@@ -129,6 +148,7 @@ def embed_items(session: Session, user_id: int, limit: int | None = None, echo=l
     batch: list = []
 
     def flush():
+        check_cap(session, user_id)
         vectors, tokens = embed_texts([doc for _, doc, _ in batch], DOC_MODEL, "document", client)
         values = [{"item_id": item_id, "model": DOC_MODEL, "content_hash": digest, "vector": vector}
                   for (item_id, _, digest), vector in zip(batch, vectors)]
@@ -160,14 +180,26 @@ _query_cache: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
 
 def query_vector(session: Session, user_id: int, query: str, model: str = QUERY_MODEL) -> list[float]:
     """The vector for a search text. A small LRU cache removes the Voyage
-    round trip for repeated searches; only real calls reach the ledger."""
+    round trip for repeated searches; only real calls reach the ledger.
+    In demo mode the vector comes from `demo_query_vectors` (the suggested
+    searches, embedded when the bundle was built) and Voyage is never called:
+    a text that is not there raises EmbeddingError and the search falls back
+    to keywords."""
     key = (model, query.strip().lower())
     if key in _query_cache:
         _query_cache.move_to_end(key)
         return _query_cache[key]
-    vectors, tokens = embed_texts([query], model, "query")
-    record_spend(session, user_id, model, "embed_query", tokens)
-    _query_cache[key] = vectors[0]
+    if get_settings().kosha_demo:
+        stored = session.scalar(select(DemoQueryVector.vector).where(DemoQueryVector.query == key[1], DemoQueryVector.model == model))
+        if stored is None:
+            raise EmbeddingError("The demo ranks by meaning only for its suggested searches")
+        vector = stored.to_list() if hasattr(stored, "to_list") else list(stored)
+    else:
+        check_cap(session, user_id)
+        vectors, tokens = embed_texts([query], model, "query")
+        record_spend(session, user_id, model, "embed_query", tokens)
+        vector = vectors[0]
+    _query_cache[key] = vector
     if len(_query_cache) > QUERY_CACHE_SIZE:
         _query_cache.popitem(last=False)
-    return vectors[0]
+    return vector

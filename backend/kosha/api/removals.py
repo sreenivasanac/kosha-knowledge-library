@@ -35,6 +35,8 @@ def result(body: RemovalResultIn, user: User = Depends(current_user), session: S
     if body.status == "failed":
         log.warning("Removal at source failed for item %s (%s): %s", item.id, item.source, body.detail)
         return {"item_id": body.item_id, "deleted": False}
+    # Read again under a row lock: an unarchive or undo since the extension fetched the list must win.
+    session.refresh(item, with_for_update=True)
     if not item.is_saved or item.archived_at is None:  # only what `/removals/pending` handed out
         raise HTTPException(status.HTTP_409_CONFLICT, "Item is not archived, so it is not waiting for removal")
     delete_item(session, user, item)

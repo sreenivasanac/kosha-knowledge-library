@@ -1,20 +1,23 @@
 """Media store: download photos and previews (and videos when the setting is
-on) to the media folder, and serve them.
+on) to the media storage (kosha/storage.py: a folder or an S3-compatible
+bucket), and serve them.
 
 Resumable by construction: a row is done when its path column is set, files
 are written to `<name>.part` and renamed, so an interrupted run just continues.
 """
 import re
+import tempfile
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from kosha import storage
 from kosha.auth import current_user
 from kosha.config import (
     MEDIA_ALLOWED_HOSTS,
@@ -23,7 +26,6 @@ from kosha.config import (
     MEDIA_MAX_BYTES_VIDEO,
     MEDIA_MAX_REDIRECTS,
     MEDIA_TIMEOUT_S,
-    get_settings,
 )
 from kosha.db import get_session
 from kosha.models import Item, ItemMedia, User
@@ -84,11 +86,22 @@ def _download(client: httpx.Client, url: str, dest: Path, max_bytes: int) -> int
     raise OSError("Too many redirects")
 
 
+def _store(client: httpx.Client, url: str, store, key: str, max_bytes: int, folder: Path) -> int:
+    """Download one file to `folder`, then hand it to the storage under `key`."""
+    temp = folder / key.replace("/", "_")
+    try:
+        size = _download(client, url, temp, max_bytes)
+        store.put_file(key, temp)
+    finally:
+        temp.unlink(missing_ok=True)
+    return size
+
+
 def fetch_media(session: Session, user_id: int, limit: int | None = None, client: httpx.Client | None = None) -> dict:
     """Download what the settings ask for and is not stored yet. Previews are
     always stored. Returns counts; failures are left for the next run."""
     settings = load_settings(session, user_id)
-    root = get_settings().kosha_media_dir
+    store = storage.get_storage(session)
     rows = session.scalars(
         select(ItemMedia).join(Item, Item.id == ItemMedia.item_id).where(
             Item.user_id == user_id,
@@ -113,17 +126,17 @@ def fetch_media(session: Session, user_id: int, limit: int | None = None, client
     # ponytail: a file that fails (deleted at the source) is retried every run;
     # add a failure counter column if those pile up.
     try:
-        with ThreadPoolExecutor(MEDIA_CONCURRENCY) as pool:
-            futures = {pool.submit(_download, client, url, root / rel, max_bytes): (m, column, rel)
+        with tempfile.TemporaryDirectory(prefix="kosha-media-") as folder, ThreadPoolExecutor(MEDIA_CONCURRENCY) as pool:
+            futures = {pool.submit(_store, client, url, store, rel, max_bytes, Path(folder)): (m, column, rel)
                        for m, column, url, rel, max_bytes in jobs}
             for done, future in enumerate(as_completed(futures), 1):
                 m, column, rel = futures[future]
                 try:
                     size = future.result()
-                except (httpx.HTTPError, OSError):
+                except (httpx.HTTPError, *storage.ERRORS):
                     counts["failed"] += 1
                     continue
-                setattr(m, column, rel)  # stored relative to the media folder
+                setattr(m, column, rel)  # the storage key: relative to the media folder or the bucket prefix
                 if column == "local_path":
                     m.bytes = size
                 counts["downloaded"] += 1
@@ -141,18 +154,22 @@ router = APIRouter(tags=["media"])
 
 
 @router.get("/media/{media_id}")
-def serve_media(media_id: int, preview: bool = False, user: User = Depends(current_user), session: Session = Depends(get_session)):
-    """The stored file when there is one; otherwise a redirect to the remote
+def serve_media(media_id: int, request: Request, preview: bool = False, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """The stored file when there is one, with `Range` support so a video can
+    seek (from disk, streamed from the bucket, or a redirect to a presigned
+    address, as the storage is configured); otherwise a redirect to the remote
     address (which stops working if the source removes the file)."""
     media = session.get(ItemMedia, media_id)
     if media is None or session.get(Item, media.item_id).user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Media not found")
-    root = get_settings().kosha_media_dir.resolve()
     local = media.local_preview_path if preview else media.local_path
     if local:
-        path = (root / local).resolve()
-        if path.is_relative_to(root) and path.is_file():
-            return FileResponse(path, media_type=None if preview else media.mime_type)
+        try:
+            stored = storage.response(session, local, request.headers.get("range"), None if preview else media.mime_type)
+        except storage.StorageError:  # a key that points outside the storage
+            stored = None
+        if stored is not None:
+            return stored
     remote = (media.preview_url or media.original_url) if preview else media.original_url
     if not remote:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No file for this media")

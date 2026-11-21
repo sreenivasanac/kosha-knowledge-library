@@ -4,8 +4,8 @@ import { Outlet, useLocation, useNavigate, useSearch } from '@tanstack/react-rou
 import { Archive, ChevronRight, CircleDot, HelpCircle, Inbox, LogOut, MessageCircleQuestion, PanelLeftClose, PanelLeftOpen, Pencil, RefreshCw, Search, Settings, Sparkles, Star, Tags, Terminal, X } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { runAction } from './actions';
-import { api, collectionsQuery, facetsQuery, flattenTags, invalidateLibrary, meQuery, statsQuery, tagsQuery, useCapabilities, useLists, useSavedViews, type TagNode } from './api';
-import { APP_NAME, SYNC_POLL_MS, X_API_SYNC_SOURCE } from './constants';
+import { api, collectionsQuery, facetsQuery, flattenTags, invalidateLibrary, meQuery, setMe, statsQuery, tagsQuery, useCapabilities, useIsDemo, useLists, useSavedViews, type TagNode } from './api';
+import { APP_NAME, DEMO_BANNER, REPO_URL, SYNC_POLL_MS, X_API_SYNC_SOURCE } from './constants';
 import { ago, fullDate } from './format';
 import { Drawer } from './Drawer';
 import { KeyboardLayer } from './KeyboardLayer';
@@ -158,14 +158,20 @@ function Sidebar({ rail }: { rail: boolean }) {
     { label: 'Pipeline console', icon: <Terminal size={15} />, count: null, active: location.pathname === '/console', action: 'go.console' },
   ];
 
+  // A counted view with nothing in it is left out (it comes back when it has items or is the one open). All and Untagged always show.
+  const shown = (m: (typeof main)[number]) => m.count !== 0 || m.active || m.label === 'All' || m.label === 'Untagged';
+
   async function signOut() {
     try {
       await api('/api/auth/logout', { method: 'POST' });
     } catch (error) {
-      toastError(error);
+      // Still signed in on the server: stay here, so the screen does not claim otherwise. Sign out can be pressed again.
+      return toastError(error);
     }
+    setMe(null);
     client.clear();
-    void navigate({ to: '/login' });
+    // The router decides what a visitor sees at `/`: the landing page or the sign-in form.
+    void navigate({ to: '/' });
   }
 
   if (rail)
@@ -208,7 +214,7 @@ function Sidebar({ rail }: { rail: boolean }) {
           <kbd className="kbd">/</kbd>
         </button>
         <div className="space-y-px">
-          {main.map((m) => (
+          {main.filter(shown).map((m) => (
             <Row key={m.label} label={m.label} icon={m.icon} count={m.count} active={m.active} title={hint(m.label, m.action)} onClick={() => runAction(m.action)} />
           ))}
         </div>
@@ -231,19 +237,19 @@ function Sidebar({ rail }: { rail: boolean }) {
           ))}
         </Section>
         <Section title="Sources">
-          {facets?.sources.map((f) => (
+          {facets?.sources.filter((f) => f.count > 0).map((f) => (
             <Row key={f.value} label={f.value === 'x' ? 'X' : f.value} count={f.count} active={q === `source:${f.value}`} onClick={() => goQuery(`source:${f.value}`)} />
           ))}
         </Section>
         <Section title="Years">
-          {facets?.years.map((f) => (
+          {facets?.years.filter((f) => f.count > 0).map((f) => (
             <Row key={f.value} label={f.value} count={f.count} active={q === `saved:${f.value}`} onClick={() => goQuery(`saved:${f.value}`)} />
           ))}
         </Section>
         <Section title="Folders" defaultOpen={collections.length <= 12}>
           {collections.length > 8 && <input aria-label="Filter folders" placeholder="Filter folders" value={folderFilter} onChange={(e) => setFolderFilter(e.target.value)} className="field mx-2 mb-1 h-7 w-[calc(100%-1rem)]" />}
           {collections.length === 0 && <p className="px-2 py-1 text-sm text-ink-3">No folders from your sources.</p>}
-          {shownFolders.map((c) => (
+          {shownFolders.filter((c) => c.count > 0).map((c) => (
             <Row key={c.id} label={c.name} count={c.count} active={q === `folder:${quoteValue(c.name)}`} onClick={() => goQuery(`folder:${quoteValue(c.name)}`)} />
           ))}
         </Section>
@@ -312,15 +318,10 @@ export function Shell() {
     () => DESKTOP.matches,
   );
   const location = useLocation();
-  const navigate = useNavigate();
   const search = validateLibrarySearch(useSearch({ strict: false }) as Record<string, unknown>);
-  const me = useQuery(meQuery);
+  const demo = useIsDemo();
   const drawerItem = hasDrawer(location.pathname) ? search.item : undefined;
 
-  // The session ended (a 401 cleared the cached user): back to the login page.
-  useEffect(() => {
-    if (me.data === null) void navigate({ to: '/login' });
-  }, [me.data, navigate]);
   // A phone's sidebar drawer closes when a view is chosen.
   useEffect(() => setState({ mobileNav: false }), [location.href]);
 
@@ -336,6 +337,14 @@ export function Shell() {
       {mobileNav && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setState({ mobileNav: false })} />}
       {/* On a wide screen the page makes room for the drawer, so the reading column recentres without changing width (nothing reflows). */}
       <div id="page" className={`${sidebarOpen ? 'lg:pl-64' : 'lg:pl-12'} ${drawerItem != null ? 'min-[1400px]:pr-(--drawer-w)' : ''}`}>
+        {demo && (
+          <p role="note" className="flex flex-wrap items-center justify-center gap-x-2 border-b border-line bg-accent-soft px-3 py-1 text-center text-xs">
+            {DEMO_BANNER}
+            <a className="font-semibold text-accent hover:underline" href={REPO_URL}>
+              Run your own
+            </a>
+          </p>
+        )}
         <Outlet />
       </div>
       {drawerItem != null && <Drawer id={drawerItem} onClose={() => setSearch({ item: undefined })} />}

@@ -59,15 +59,20 @@ async function capture(): Promise<void> {
             unreadable.add(card);
             unreadableCount += 1;
           }
-        } else if (!seen.has(post.urn!)) {
-          seen.add(post.urn!);
+        } else if (!seen.has(post.urn!) && !fresh.some((p) => p.urn === post.urn)) {
           fresh.push(post);
         }
       }
 
       if (fresh.length) {
         idleScrolls = 0;
-        await chrome.runtime.sendMessage({ type: 'li:posts', posts: fresh, pageUrl: location.href }).catch(() => undefined);
+        const stored = await chrome.runtime.sendMessage({ type: 'li:posts', posts: fresh, pageUrl: location.href }).catch(() => undefined);
+        // Not acknowledged (the outbox could not write): these posts are not captured, so stop and say so.
+        if (!stored?.ok) {
+          note = 'Stopped: the extension could not store the posts; reload the page and capture again';
+          return;
+        }
+        for (const post of fresh) seen.add(post.urn!);
       } else if (++idleScrolls >= LINKEDIN.capture.stopAfterIdleScrolls) {
         note = seen.size ? 'Finished: no more posts' : 'Finished: no posts recognised (selectors may be out of date)';
         return;

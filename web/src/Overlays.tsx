@@ -160,16 +160,19 @@ function Jev({ question: initial = '' }: { question?: string }) {
   const s = withDefaults(currentSearch());
   const [question, setQuestion] = useState(initial);
   const [threshold, setThreshold] = useState(JEV_DEFAULT_THRESHOLD);
-  const [estimate, setEstimate] = useState<{ estimate_usd: number; n: number } | null>(null);
+  // The estimate is kept with the request it was made for (`key`); a price is only offered for exactly that request.
+  const [priced, setEstimate] = useState<{ estimate_usd: number; n: number; key: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const body = (dry_run: boolean) => ({ q: s.q, mode: s.mode, question: question.trim(), threshold, dry_run });
+  const key = JSON.stringify(body(true));
+  const estimate = priced?.key === key ? priced : null;
 
   async function call(dryRun: boolean) {
     setBusy(true);
     setError(null);
     try {
-      if (dryRun) setEstimate(await api('/api/jev/check', { method: 'POST', body: body(true) }));
+      if (dryRun) setEstimate({ ...(await api<{ estimate_usd: number; n: number }>('/api/jev/check', { method: 'POST', body: body(true) })), key });
       else {
         const result = await api<{ snapshot_id: string | number; kept: number; spent_usd: number }>('/api/jev/check', { method: 'POST', body: body(false) });
         setSearch({ snap: String(result.snapshot_id), jq: question.trim(), page: undefined, item: undefined });
@@ -231,8 +234,12 @@ function Jev({ question: initial = '' }: { question?: string }) {
 interface MediaEstimate {
   n_media: number;
   minutes: number;
-  images: number;
+  images?: number;
   estimate_usd: number;
+  /** What the transcription provider is expected to bill; it can differ from the media's length (silence is cut, or billing is rounded up). */
+  expected_billed_minutes?: number;
+  provider?: string | null;
+  model?: string | null;
 }
 
 /** Media text: shows how many files, how many minutes and the estimated cost before anything is spent. */
@@ -240,7 +247,7 @@ function MediaText({ ids }: { ids: number[] | 'all' }) {
   const caps = useCapabilities();
   const client = useQueryClient();
   const target = ids === 'all' ? { all: true } : { item_ids: ids };
-  const estimate = useQuery({ queryKey: ['media-text-estimate', ids], queryFn: () => api<MediaEstimate>('/api/media-text/estimate', { method: 'POST', body: target }), enabled: caps.mediaText, staleTime: 0 });
+  const estimate = useQuery({ queryKey: ['media-text-estimate', ids], queryFn: () => api<MediaEstimate>('/api/media-text/estimate', { method: 'POST', body: target }), enabled: caps.mediaText, staleTime: 0, refetchOnWindowFocus: false });
   const [busy, setBusy] = useState(false);
   async function start() {
     setBusy(true);
@@ -259,7 +266,8 @@ function MediaText({ ids }: { ids: number[] | 'all' }) {
     }
     setBusy(false);
   }
-  const e = estimate.data;
+  // Only an estimate fetched for this dialog counts: not one left from an earlier opening while it is refreshed, nor one whose refresh failed.
+  const e = estimate.isSuccess && !estimate.isFetching ? estimate.data : undefined;
   // A large run must be chosen on purpose: Enter lands on Cancel, not on Start.
   const careful = !e || e.estimate_usd > MEDIA_TEXT_CAREFUL_USD;
   const startButton = useRef<HTMLButtonElement>(null);
@@ -286,17 +294,17 @@ function MediaText({ ids }: { ids: number[] | 'all' }) {
         </p>
         {!caps.mediaText ? (
           <Unavailable what="Media text" />
-        ) : estimate.isPending ? (
+        ) : estimate.isFetching ? (
           <div className="skeleton h-16" aria-busy="true" />
-        ) : estimate.error ? (
+        ) : estimate.error || !e ? (
           <ErrorNote error={estimate.error} retry={() => void estimate.refetch()} what="Media text" />
         ) : (
           <>
             <dl className="grid grid-cols-3 gap-2 text-center">
               {[
-                ['Files', e!.n_media.toLocaleString(), `${e!.images.toLocaleString()} image${e!.images === 1 ? '' : 's'}, ${(e!.n_media - e!.images).toLocaleString()} video or audio`],
-                ['Minutes to transcribe', e!.minutes.toLocaleString(undefined, { maximumFractionDigits: 1 }), ''],
-                ['Estimated cost', usd(e!.estimate_usd), ''],
+                ['Files', e!.n_media.toLocaleString(), e!.images == null ? '' : `${e!.images.toLocaleString()} image${e!.images === 1 ? '' : 's'}, ${(e!.n_media - e!.images).toLocaleString()} video or audio`],
+                ['Minutes to transcribe', e!.minutes.toLocaleString(undefined, { maximumFractionDigits: 1 }), e!.expected_billed_minutes == null ? '' : `about ${e!.expected_billed_minutes.toLocaleString(undefined, { maximumFractionDigits: 1 })} billed`],
+                ['Estimated cost', usd(e!.estimate_usd), e!.provider ? `by ${[e!.provider, e!.model].filter(Boolean).join(', ')}` : ''],
               ].map(([label, value, detail]) => (
                 <div key={label} className="rounded-md bg-sunken px-2 py-3">
                   <dd className="text-2xl font-semibold tabular-nums">{value}</dd>

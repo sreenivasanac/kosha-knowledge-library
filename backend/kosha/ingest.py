@@ -7,7 +7,7 @@ a worker added (stars, notes, local files, extracts) is touched.
 """
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ class Counts:
     new: int = 0
     updated: int = 0
     unchanged: int = 0
+    new_ids: list[int] = field(default_factory=list)  # the saved items this batch created
 
 
 def compute_content_hash(title: str | None, body: str | None, extracts: list[str]) -> str:
@@ -186,6 +187,7 @@ def upsert_result(session: Session, user_id: int, result: ParseResult) -> Counts
             if parsed.is_saved:  # context items (quoted posts, parents) are not counted
                 if is_new:
                     counts.new += 1
+                    counts.new_ids.append(item.id)
                 elif changed:
                     counts.updated += 1
                 else:
@@ -230,6 +232,10 @@ def ingest_envelope(session: Session, user_id: int, envelope: dict) -> Capture:
     capture.parse_error = None
     capture.parsed_at = datetime.now(UTC)
     capture.items_new, capture.items_updated, capture.items_unchanged = counts.new, counts.updated, counts.unchanged
+    if counts.new_ids:
+        from kosha import media_text  # here: media_text imports this module
+
+        media_text.auto_queue(session, user_id, counts.new_ids)
     return capture
 
 

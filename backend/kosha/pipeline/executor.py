@@ -23,7 +23,7 @@ from constella.loop import label_question
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
-from kosha import jev
+from kosha import demo, jev
 from kosha.config import DEFAULT_NAMESPACE, PIPELINE_MAX_CHARS
 from kosha.items_query import STABLE_ORDER
 from kosha.models import Item, ItemEmbedding, LabelRun, ResultSet, SavedView
@@ -31,7 +31,7 @@ from kosha.pipeline import writes
 from kosha.pipeline.parser import Stage, Tok, number, split
 from kosha.prefs import load_settings
 from kosha.search import engine
-from kosha.search.embeddings import DOC_MODEL, QUERY_MODEL, EmbeddingError, embed_texts, query_vector, record_spend
+from kosha.search.embeddings import DOC_MODEL, QUERY_MODEL, EmbeddingError, check_cap, embed_texts, query_vector, record_spend
 from kosha.search import rerank as reranking
 from kosha.search.query import KEYS, SORT_KEYS, And, Not, Or, QueryError, Text, compile_filter, order_by, parse, to_string
 from kosha.summaries import item_text
@@ -104,6 +104,10 @@ EXAMPLES
   @vdb | where vdb:>=0.8 | tag "AI/Vector search"      (preview) then the same call with confirm="c_..."
   where id:1234 | show author date body:2000 url tags
 """
+
+
+class ServiceUnavailable(QueryError):
+    """The pipeline is fine but a service it needs is not configured: the REST route answers 503, not 422."""
 
 
 @dataclass
@@ -503,7 +507,10 @@ def s_except(ctx: Ctx, stage: Stage):
 def _ask(ctx: Ctx, stage: Stage, pairs: list, operation: str) -> list | None:
     """Estimate, check the budgets, then ask. Returns the answers, or None
     when the call stopped to ask for a confirm token (nothing spent)."""
-    est = jev.estimate(ctx.session, ctx.user_id, pairs)
+    try:
+        est = jev.estimate(ctx.session, ctx.user_id, pairs)
+    except jev.cj.JevError as exc:  # no TypeSafe key on this server: nothing was asked
+        raise ServiceUnavailable(f"{stage.name}: Jev is not available on this server ({exc})", stage.pos) from None
     if est.to_ask > jev.JEV_CONFIRM_ITEMS:
         # Bound to the pipeline, to how many questions are new and to the estimate shown:
         # if the set or the cache changed since the preview, the token no longer fits.
@@ -606,6 +613,7 @@ def s_score_labels(ctx: Ctx, stage: Stage):
         ctx.out.append("score_labels: no item in the set has both an embedding and text")
         return None
     try:
+        check_cap(ctx.session, ctx.user_id)
         label_vectors, tokens = embed_texts([f"{label.path}: {label.definition}" for label in labels], QUERY_MODEL, "query")
     except EmbeddingError as exc:
         raise QueryError(f"score_labels cannot embed the tag definitions: {exc}", stage.pos) from None
@@ -1073,6 +1081,7 @@ def run_query(session: Session, user_id: int, pipeline: str, confirm: str | None
         if stage.name not in STAGES:
             close = difflib.get_close_matches(stage.name, STAGES, 1)
             raise QueryError(f'Unknown stage "{stage.name}"' + (f'; did you mean "{close[0]}"?' if close else '. Send "help" for the grammar.'), stage.pos)
+    demo.check_stages(stages)
     for stage in stages[:-1]:
         if _is_write(stage):
             raise QueryError(f"{stage.name} writes, so it must be the last stage", stage.pos)

@@ -72,7 +72,7 @@ def serialize_items(session: Session, user_id: int, items: list[Item], nest_quot
 
     # Targets of quotes and replies that are held.
     target_ids = {r.to_item_id for rows in relations.values() for r in rows if r.to_item_id}
-    targets = {t.id: t for t in session.scalars(select(Item).where(Item.id.in_(target_ids)))} if target_ids else {}
+    targets = {t.id: t for t in session.scalars(select(Item).where(Item.user_id == user_id, Item.id.in_(target_ids)))} if target_ids else {}
     quoted_out = {}
     if nest_quoted:
         quoted_rows = [targets[r.to_item_id] for rows in relations.values() for r in rows

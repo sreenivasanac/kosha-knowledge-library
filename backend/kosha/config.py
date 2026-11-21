@@ -11,6 +11,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # --- Branding ---------------------------------------------------------------
 APP_NAME = "Kosha"
 APP_VERSION = "0.1.0"
+GITHUB_URL = "https://github.com/sreenivasanac/kosha-knowledge-library"
+DOCS_URL = GITHUB_URL + "#readme"
 
 # --- Paths ------------------------------------------------------------------
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -30,6 +32,26 @@ CSRF_HEADER = "X-Requested-With"
 CSRF_HEADER_VALUE = "kosha"
 LOGIN_MAX_FAILURES = 5  # failed logins per client address ...
 LOGIN_WINDOW_S = 60  # ... within this many seconds, then 429
+# --- Accounts ---------------------------------------------------------------
+PASSWORD_MIN_CHARS = 10
+PASSWORD_MAX_CHARS = 200  # hashing a longer one costs the server time for nothing
+SIGNUP_MODES = ("open", "invite", "closed")
+DEFAULT_SIGNUP_MODE = "closed"  # after setup, until the admin opens sign-ups or makes an invite
+INVITE_DEFAULT_DAYS = 7
+INVITE_MAX_DAYS = 90
+RESET_LINK_HOURS = 24
+# Web app routes the admin's links point at (the token is in the query string).
+SIGNUP_PATH = "/signup?invite="
+RESET_PATH = "/reset?token="
+ONBOARDING_STEPS = ("account", "sources", "ai", "media", "look")
+ONBOARDING_ADMIN_STEPS = ("ai", "media")  # instance keys and storage: not a normal user's to set
+ONBOARDING_STATES = ("done", "skipped", "todo")
+
+# --- Demo mode (KOSHA_DEMO=true; kosha/demo.py) ------------------------------
+DEMO_NOTICE = "This is a public demo. Changes are reset every night."
+DEMO_WRITES_PER_MINUTE = 60  # changing requests per client address, then 429
+DEMO_MEDIA_SUBDIR = "demo"  # the bundle's media files live here inside the media folder
+
 STATEMENT_TIMEOUT_MS = 15_000  # a request handler's SQL statement is cancelled after this (kosha/db.py)
 PIPELINE_MAX_CHARS = 4000  # longest pipeline text `query` accepts (REST and MCP)
 WEB_DIST_DIR = REPO_ROOT / "web" / "dist"  # the built web app, served at / when present
@@ -83,17 +105,28 @@ DEFAULT_SETTINGS: dict = {
     # default follows docs/experiments/ask_eval_2026-11-21.md.
     "llm_small_model": "openai/gpt-6-luna",  # summaries, image descriptions ($0.10 / $0.50 per 1M tokens)
     "llm_ask_model": "openai/gpt-6.1-terra",  # Ask ($1 / $5 per 1M tokens)
-    "stt_model": "openai/gpt-transcribe",  # speech to text ($0.0045 a minute)
+    # Speech to text. "auto": DeepInfra Whisper large-v3-turbo ($0.0002 a minute) when a
+    # transcription key is set, else OpenAI ($0.0045 a minute); see kosha.llm.stt_model.
+    "stt_model": "auto",
+    # Queue the media of newly captured items for media text without being asked (kosha.media_text.auto_queue).
+    "media_text_auto": False,
     "llm_monthly_cap_usd": 5.0,  # all LLM and speech-to-text calls in a calendar month
+    "voyage_monthly_cap_usd": 5.0,  # embeddings and Voyage reranking in a calendar month
 }
+# The settings that limit paid calls. The admin sets an instance-wide maximum
+# for each (`instance_settings.caps`); a normal user's own value cannot exceed it.
+CAP_SETTINGS = ("x_api_monthly_cap_usd", "jev_run_budget_usd", "jev_run_max_budget_usd", "jev_monthly_budget_usd",
+                "llm_monthly_cap_usd", "voyage_monthly_cap_usd")
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", extra="ignore")
+    # env_ignore_empty: `OPENAI_API_KEY=` (present but empty) means "not set".
+    model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", extra="ignore", env_ignore_empty=True)
 
     database_url: str
     test_database_url: str = ""
     kosha_secret_key: str
+    # Optional: `kosha create-admin` makes this account, so the setup screen is skipped.
     kosha_admin_email: str = ""
     kosha_admin_password: str = ""
     kosha_api_token: str = ""
@@ -111,6 +144,18 @@ class Settings(BaseSettings):
     typesafe_api_key: str = ""
     # OpenAI (Ask, LLM summaries, media text). Other LiteLLM providers read their own environment variables.
     openai_api_key: str = ""
+    # A separate speech-to-text provider (optional): key, provider and model name.
+    kosha_transcription_api_key: str = ""
+    deepinfra_api_key: str = ""  # used for speech to text when KOSHA_TRANSCRIPTION_API_KEY is not set
+    kosha_transcription_provider: str = ""
+    kosha_transcription_model: str = ""
+    # The web app shows a public landing page to signed-out visitors, with a link to the demo.
+    kosha_landing: bool = False
+    kosha_demo_url: str = ""
+    # This instance is the public demo (kosha/demo.py): one published account, paid and destructive actions refused.
+    kosha_demo: bool = False
+    kosha_demo_email: str = ""
+    kosha_demo_password: str = ""
 
 
 @lru_cache

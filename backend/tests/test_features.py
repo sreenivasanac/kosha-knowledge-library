@@ -238,6 +238,7 @@ def fake_media(monkeypatch, fake_llm):
         transcripts.append((model, minutes, prompt))
         return {"text": "We tune HNSW for pgvector.", "lang": "en", "segments": None, "usd": 0.009}
 
+    monkeypatch.setattr(llm, "transcription_key", lambda: None)  # whatever .env holds: the OpenAI fallback
     monkeypatch.setattr(media_text, "_download", download)
     monkeypatch.setattr(media_text, "_audio_pieces", lambda video, folder: [video])
     monkeypatch.setattr(media_text.llm, "transcribe", transcribe)
@@ -247,8 +248,11 @@ def fake_media(monkeypatch, fake_llm):
 def test_media_text_estimate_and_extract(session, user, media_item, fake_media):
     item, video, photo, evil = media_item
     rows = media_text.pending(session, user.id, [item.id])
+    billed = 2 * (1 - media_text.EXPECTED_SKIP_MINUTES)  # the speech pre-filter's expected share is taken off
     assert media_text.estimate(session, user.id, rows) == {
-        "n_media": 3, "minutes": 2.0, "images": 2, "unknown_duration": 0, "estimate_usd": round(2 * 0.0045 + 2 * media_text.IMAGE_ESTIMATE_USD, 4)}
+        "n_media": 3, "minutes": 2.0, "expected_billed_minutes": round(billed, 1), "images": 2, "unknown_duration": 0,
+        "estimate_usd": round(billed * 0.0045 + (2 + media_text.EXPECTED_SKIP_FILES) * media_text.IMAGE_ESTIMATE_USD, 4),
+        "provider": "openai", "model": "openai/gpt-transcribe"}
     assert media_text.pending(session, user.id) == [] and len(media_text.pending(session, user.id, everything=True)) == 3
     before = item.content_hash
 
@@ -409,10 +413,11 @@ def test_spend(client, session, user):
     assert body["month"] == datetime.now(UTC).strftime("%Y-%m") and body["total_usd"] == 1.38
     assert body["providers"] == [{"provider": "jev", "usd": 0.02, "capped_usd": 0.02, "calls": 1},
                                  {"provider": "openai", "usd": 1.06, "capped_usd": 0.06, "calls": 3},
-                                 {"provider": "voyage", "usd": 0.3, "capped_usd": 0.0, "calls": 1}]
-    assert {c["name"]: (c["cap_usd"], c["spent_usd"]) for c in body["caps"]} == {"x": (3.0, 0.0), "jev": (5.0, 0.02), "llm": (5.0, 0.06)}
+                                 {"provider": "voyage", "usd": 0.3, "capped_usd": 0.3, "calls": 1}]
+    assert {c["name"]: (c["cap_usd"], c["spent_usd"]) for c in body["caps"]} == {
+        "x": (3.0, 0.0), "jev": (5.0, 0.02), "llm": (5.0, 0.06), "voyage": (5.0, 0.3)}
     # What the caps leave out is listed, so the two sets of numbers add up.
-    assert [(u["provider"], u["operation"], u["usd"]) for u in body["uncapped"]] == [("openai", "experiment", 1.0), ("voyage", "embed", 0.3)]
+    assert [(u["provider"], u["operation"], u["usd"]) for u in body["uncapped"]] == [("openai", "experiment", 1.0)]
     assert all(c["counts"] for c in body["caps"]) and body["note"]
     assert body["caps"][2]["spent_usd"] == round(llm.month_spend(session, user.id), 6)  # the number the cap check uses
 

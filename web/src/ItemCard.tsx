@@ -2,9 +2,10 @@
 import { Archive, ArchiveRestore, BookOpen, Bot, ExternalLink, Eye, FileText, Heart, MessageCircle, Play, Repeat2, Star, StickyNote, Tag, Trash2 } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { focusItem, runAction } from './actions';
-import type { Author, Item, ItemTag, Link, Media } from './api';
+import { useIsDemo, type Author, type Item, type ItemTag, type Link, type Media } from './api';
 import { deleteForever } from './ArchiveTools';
-import { CLAMP_CHARS, CLAMP_LINES, DOUBTFUL_BELOW, MEDIA_MAX_HEIGHT, type View } from './constants';
+import { CLAMP_CHARS, CLAMP_LINES, DEMO_UNAVAILABLE, DOUBTFUL_BELOW, MEDIA_MAX_HEIGHT, type View } from './constants';
+import { decodeEntities } from './edits';
 import { count, displayUrl, duration, fullDate, shortDate } from './format';
 import { goQuery, setSearch } from './nav';
 import { quoteValue } from './query';
@@ -358,9 +359,8 @@ function Marks({ item }: { item: Item }) {
 }
 
 /** Search-result excerpt; the server marks matches with <mark> or <b>, rendered here without trusting HTML. */
-const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"' };
 /** The server escapes the snippet as HTML; turn the few entities back into characters (it is rendered as text). */
-const decode = (text: string) => text.replace(/&(?:#x([0-9a-f]+)|#(\d+)|(amp|lt|gt|quot));/gi, (_, hex, dec, name) => (name ? ENTITIES[name.toLowerCase()] : String.fromCodePoint(hex ? parseInt(hex, 16) : Number(dec))));
+const decode = decodeEntities;
 
 function Snippet({ text }: { text: string }) {
   const parts = text.split(/<\/?(?:mark|b|em)>/).map(decode);
@@ -409,6 +409,7 @@ function SelectBox({ item, selected, show }: { item: Item; selected: boolean; sh
 }
 
 function CardActions({ item }: { item: Item }) {
+  const demo = useIsDemo();
   const hint = useHint();
   const act = (id: string) => (e: MouseEvent) => {
     e.stopPropagation();
@@ -428,7 +429,7 @@ function CardActions({ item }: { item: Item }) {
         {item.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
       </button>
       {item.archived && (
-        <button className={`${cls} hover:text-danger`} title="Delete permanently" aria-label="Delete permanently" onClick={(e) => (e.stopPropagation(), deleteForever([item.id]))}>
+        <button className={`${cls} hover:text-danger`} disabled={demo} title={demo ? DEMO_UNAVAILABLE : 'Delete permanently'} aria-label="Delete permanently" onClick={(e) => (e.stopPropagation(), deleteForever([item.id]))}>
           <Trash2 size={15} />
         </button>
       )}
@@ -466,7 +467,8 @@ export function ItemCard({ item, view }: { item: Item; view: View }) {
         <span className="w-32 shrink-0 truncate font-medium max-sm:w-20">{item.author.name ?? item.author.handle}</span>
         <span className="min-w-0 flex-1 truncate text-ink-2">
           {item.title && <span className="font-medium text-ink">{item.title} </span>}
-          {decode((item.snippet ?? item.body ?? '').replace(/<\/?(?:mark|b|em)>/g, '')).replace(/\s+/g, ' ')}
+          {/* Only the snippet is escaped HTML with match marks; the body is plain text and shown as written. */}
+          {(item.snippet != null ? decode(item.snippet.replace(/<\/?(?:mark|b|em)>/g, '')) : (item.body ?? '')).replace(/\s+/g, ' ')}
         </span>
         <span className="flex max-w-[30%] shrink-0 items-center gap-1 overflow-hidden max-sm:hidden">
           {item.tags.slice(0, 2).map((t) => (

@@ -29,7 +29,11 @@ def run_due(session, now: datetime | None = None) -> list[dict]:
         last = (state.state or {}).get("last_run_at") if state else None
         if last and (now - datetime.fromisoformat(last)).total_seconds() < X_SYNC_INTERVAL_S:
             continue
-        done.append(sync_bookmarks(session, user_id))
+        try:
+            done.append(sync_bookmarks(session, user_id))
+        except Exception:  # one user's failed sync must not keep the others from theirs
+            session.rollback()
+            log.exception("X sync failed for user %s", user_id)
     return done
 
 

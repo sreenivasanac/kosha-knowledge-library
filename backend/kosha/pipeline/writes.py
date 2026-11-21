@@ -77,6 +77,9 @@ def find_tag(session: Session, user_id: int, namespace: str, path: str) -> Tag |
 
 def create_tag_path(session: Session, user_id: int, namespace: str, path: str) -> Tag:
     """Create the tag and any missing parents, as an agent's proposal."""
+    from kosha.api.tags import lock_tree  # here: the API modules import this one
+
+    lock_tree(session, user_id)
     parent, walked = None, []
     for name in (p.strip() for p in path.strip("/#").split("/") if p.strip()):
         walked.append(name)

@@ -22,8 +22,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from kosha.config import get_settings
 from kosha.db import lock_spend
+from kosha.keys import get_key
 from kosha.models import JevAnswer, JevQuestion, LabelRun, SpendLedger
 from kosha.prefs import load_settings
 
@@ -70,7 +70,7 @@ class BudgetError(RuntimeError):
 
 def get_client():
     """The Jev client. Tests replace this with a fake that has `.model` and `.ask(pairs, by)`."""
-    return cj.Jev(api_key=get_settings().typesafe_api_key or None)
+    return cj.Jev(api_key=get_key("typesafe"))
 
 
 def item_texts(session: Session, user_id: int, ids: list[int]) -> dict[int, str]:

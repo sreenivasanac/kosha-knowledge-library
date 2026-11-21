@@ -5,7 +5,7 @@ import { runAction, tagByPath } from './actions';
 import { api, flattenTags, getCapabilities, queryClient, tagsQuery, useLists, useSavedViews } from './api';
 import { SORTS, VIEWS, X_API_SYNC_SOURCE, type View } from './constants';
 import { ACTIONS } from './keymap';
-import { getRouter, goQuery, goTo, setSearch } from './nav';
+import { currentSearch, getRouter, goQuery, goTo, isLibraryPath, setSearch } from './nav';
 import { quoteValue } from './query';
 import { closeOverlay, openOverlay, toast, toastError } from './store';
 import { Keys, Modal, useBindings } from './ui';
@@ -55,6 +55,14 @@ export function Palette({ scope, initial = '' }: { scope?: 'tags' | 'lists'; ini
   const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const hit = (label: string) => words.every((w) => label.toLowerCase().includes(w));
 
+  // Export opens the Import and export tab; "this search" carries the active query there.
+  const searched = isLibraryPath() ? (currentSearch().q ?? '') : '';
+  const exportTo = (q?: string) => () => void getRouter().navigate({ to: '/settings', search: { tab: 'data', q } });
+  const exports: Command[] = [
+    ...(searched ? [{ section: 'Actions', label: 'Export the current search', detail: searched, run: exportTo(searched) }] : []),
+    { section: 'Actions', label: 'Export everything', detail: 'CSV, bookmarks HTML or JSON', run: exportTo() },
+  ];
+
   let commands: Command[];
   if (text.startsWith('/') && !scope) {
     const [name, ...rest] = text.trim().split(/\s+/);
@@ -86,6 +94,7 @@ export function Palette({ scope, initial = '' }: { scope?: 'tags' | 'lists'; ini
         ...tagCommands.slice(0, text.trim() ? 8 : 5),
         ...listCommands.slice(0, 5),
         ...ACTIONS.filter((a) => a.area !== 'Go to' && hit(a.label)).map((a) => ({ section: 'Actions', label: a.label, keys: bindings[a.id], run: () => runAction(a.id) })),
+        ...exports.filter((c) => hit(c.label)),
       ];
     }
   }

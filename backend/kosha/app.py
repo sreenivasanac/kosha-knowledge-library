@@ -10,7 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.routing import Route
 
 from kosha import auth, media
-from kosha.api import account, ai, captures, items, lists, misc, pipeline, removals, search, tags
+from kosha.api import account, admin, ai, captures, items, lists, misc, pipeline, portability, removals, search, storage_admin, tags
 from kosha.config import (
     API_PREFIX,
     APP_NAME,
@@ -23,6 +23,7 @@ from kosha.config import (
     WEB_DIST_DIR,
     get_settings,
 )
+from kosha.demo import DemoGuard
 from kosha.mcp_server import McpEndpoint
 
 TOO_LARGE = "Request body too large"
@@ -96,11 +97,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"], allow_headers=["*"],
     )
     app.add_middleware(BodyLimitMiddleware)
+    app.add_middleware(DemoGuard)  # does nothing unless KOSHA_DEMO is on
     api = APIRouter(prefix=API_PREFIX)
+    api.include_router(auth.public)  # public-config and first-run setup: no sign-in
     api.include_router(auth.router)
+    for module in (admin, storage_admin):  # an admin's session cookie only (auth.admin_user)
+        api.include_router(module.router)
     # Everything below needs a signed-in user or a bearer token.
     protected = [Depends(auth.current_user)]
-    for module in (captures, items, tags, misc, search, lists, removals, pipeline, ai, account):
+    for module in (captures, items, tags, misc, search, lists, removals, pipeline, ai, account, portability):
         api.include_router(module.router, dependencies=protected)
     if not public_docs:
         api.add_api_route("/openapi.json", lambda: app.openapi(), dependencies=protected, include_in_schema=False)

@@ -1,6 +1,32 @@
 /** Branding and tunable values, in one place. */
 export const APP_NAME = 'Kosha';
 export const APP_TAGLINE = 'Your saved posts, searchable and organised';
+/** The landing page's headline and the description search engines show. Keep index.html's meta tags in step. */
+export const HERO_LINE = 'Search everything you saved, on a server you own.';
+export const APP_DESCRIPTION = 'Kosha is a free, open-source library for your X bookmarks and LinkedIn saves. It runs on your own server, organises posts in a tag tree, and searches them by keyword and by meaning.';
+
+export const REPO_URL = 'https://github.com/sreenivasanac/kosha-knowledge-library';
+export const LICENSE_NAME = 'MIT';
+export const LINKS = {
+  repo: REPO_URL,
+  readme: `${REPO_URL}#readme`,
+  extension: `${REPO_URL}/tree/HEAD/extension#readme`,
+  mcpDocs: `${REPO_URL}/blob/HEAD/docs/MCP.md`,
+  license: `${REPO_URL}/blob/HEAD/LICENSE`,
+};
+export const AUTHOR = {
+  name: 'Sreenivasan AC',
+  github: 'https://github.com/sreenivasanac',
+  linkedin: 'https://www.linkedin.com/in/sreenivasan-ac',
+  x: 'https://x.com/sreenivasan_ac',
+};
+
+/** The server's rule for a new password; the forms check it before sending. */
+export const PASSWORD_MIN_LENGTH = 10;
+export const DEMO_BANNER = 'Demo — changes are reset every night. Some features are off.';
+export const DEMO_UNAVAILABLE = 'Not available in the demo';
+/** How often the Storage card asks for progress while files are being moved. */
+export const MIGRATE_POLL_MS = 2000;
 
 export const PAGE_SIZES = [25, 50, 100] as const;
 export const DEFAULT_PAGE_SIZE = 50;
@@ -57,6 +83,11 @@ export const STORAGE_KEYS = {
   extensionId: 'kosha.extensionId',
   position: 'kosha.position:',
   pipelineHistory: 'kosha.pipelineHistory',
+  theme: 'kosha.theme',
+  view: 'kosha.view',
+  pageSize: 'kosha.pageSize',
+  /** Set while this browser holds a session, so the public landing page can skip the "who am I" call. */
+  session: 'kosha.session',
 };
 
 /** Sent as X-Requested-With on every request; the backend rejects writes without it. */

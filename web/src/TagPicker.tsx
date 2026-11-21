@@ -11,6 +11,7 @@ import { Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { bulk, ensureTagPath } from './actions';
 import { api, flattenTags, invalidateLibrary, tagsQuery, type Item, type ItemTag } from './api';
+import { nextRole } from './edits';
 import { closeOverlay, toastError, useStore } from './store';
 import { Modal } from './ui';
 
@@ -24,6 +25,8 @@ interface PickerRow {
   count?: number;
   /** How many of the target items carry it (current rows, when several items are targeted). */
   on?: number;
+  /** Its role on each target item that carries it (current rows). */
+  roles?: ItemTag['role'][];
 }
 
 export function TagPicker({ mode, ids }: { mode: 'add' | 'remove'; ids: number[] }) {
@@ -41,8 +44,9 @@ export function TagPicker({ mode, ids }: { mode: 'add' | 'remove'; ids: number[]
   const current = new Map<number, PickerRow>();
   for (const item of items)
     for (const t of item.tags) {
-      const row = current.get(t.tag_id) ?? { kind: 'current' as const, tagId: t.tag_id, path: t.path.join('/'), role: t.role, proposed: t.status === 'proposed', on: 0 };
+      const row = current.get(t.tag_id) ?? { kind: 'current' as const, tagId: t.tag_id, path: t.path.join('/'), role: t.role, proposed: t.status === 'proposed', on: 0, roles: [] };
       row.on = (row.on ?? 0) + 1;
+      row.roles!.push(t.role);
       current.set(t.tag_id, row);
     }
   const needle = text.trim().toLowerCase();
@@ -57,6 +61,8 @@ export function TagPicker({ mode, ids }: { mode: 'add' | 'remove'; ids: number[]
   const row = rows[at];
   const n = ids.length;
   const many = n === 1 ? '' : ` ${n} items`;
+  /** A current tag that only some of the targeted items carry: it can still be added to the rest. */
+  const partial = (r: PickerRow) => mode === 'add' && r.kind === 'current' && (r.on ?? 0) < n;
 
   /** Runs one change, then keeps the picker open and ready for the next. */
   async function run(work: () => Promise<unknown>) {
@@ -78,11 +84,12 @@ export function TagPicker({ mode, ids }: { mode: 'add' | 'remove'; ids: number[]
       setJustAdded(tagId);
     });
   const remove = (r: PickerRow) => run(() => bulk(ids, { remove_tag_ids: [r.tagId!] }, `Removed #${r.path}${many && ` from${many}`}`));
-  // The role endpoint works per item; pressing the key again on the same role turns it back to "other".
+  // The role endpoint works per item; pressing the key again turns the role back to "other" (when every target has it: see `nextRole`).
   const setRole = (r: PickerRow, role: 'primary' | 'secondary') =>
     run(async () => {
       const tagId = r.kind === 'create' ? await ensureTagPath(r.path) : r.tagId!;
-      for (const id of ids) await api(`/api/items/${id}/tags/${tagId}`, { method: 'PUT', body: { role: r.role === role ? 'other' : role } });
+      const to = nextRole(r.roles ?? [], n, role);
+      for (const id of ids) await api(`/api/items/${id}/tags/${tagId}`, { method: 'PUT', body: { role: to } });
     });
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -97,7 +104,7 @@ export function TagPicker({ mode, ids }: { mode: 'add' | 'remove'; ids: number[]
     else if (!row || busy) return;
     else if (e.key === 'Enter') {
       e.preventDefault();
-      void (mode === 'remove' || (row.kind === 'current' && e.shiftKey) ? remove(row) : row.kind === 'current' ? closeOverlay() : add(row));
+      void (mode === 'remove' || (row.kind === 'current' && e.shiftKey) ? remove(row) : row.kind === 'current' && !partial(row) ? closeOverlay() : add(row));
     }
     else if (!text && (e.key === '1' || e.key === '2')) {
       e.preventDefault();
@@ -120,7 +127,7 @@ export function TagPicker({ mode, ids }: { mode: 'add' | 'remove'; ids: number[]
       <ul id="tag-options" role="listbox" aria-label="Tags" className="max-h-[46vh] overflow-y-auto py-1">
         {rows.length === 0 && <li className="px-3 py-3 text-sm text-ink-3">{mode === 'remove' ? 'No tag on the selection matches.' : 'No tags yet. Type a name to create the first one.'}</li>}
         {rows.map((r, i) => (
-          <li key={`${r.kind}-${r.tagId ?? r.path}`} id={`tag-option-${i}`} role="option" aria-selected={i === at} onMouseMove={() => i !== at && moveTo(i)} onClick={() => !busy && void (r.kind === 'current' ? (mode === 'remove' ? remove(r) : undefined) : add(r))} className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm ${i === at ? 'bg-accent-soft' : ''}`}>
+          <li key={`${r.kind}-${r.tagId ?? r.path}`} id={`tag-option-${i}`} role="option" aria-selected={i === at} onMouseMove={() => i !== at && moveTo(i)} onClick={() => !busy && void (r.kind === 'current' && !partial(r) ? (mode === 'remove' ? remove(r) : undefined) : add(r))} className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm ${i === at ? 'bg-accent-soft' : ''}`}>
             {r.kind === 'create' ? (
               <>
                 <Plus size={14} aria-hidden className="text-accent" />
@@ -137,8 +144,8 @@ export function TagPicker({ mode, ids }: { mode: 'add' | 'remove'; ids: number[]
                 </span>
                 {r.kind === 'current' ? (
                   <>
-                    {n > 1 && <span className="text-xs text-ink-3">on {r.on} of {n}</span>}
-                    <span className={`rounded px-1.5 py-px text-xs font-medium ${r.role === 'primary' ? 'bg-accent text-surface' : r.role === 'secondary' ? 'border border-accent text-accent' : 'bg-sunken text-ink-2'}`}>{n > 1 && r.role === 'other' ? 'on' : r.role}</span>
+                    {n > 1 && <span className="text-xs text-ink-3">on {r.on} of {n}{partial(r) && i === at && ' · Enter adds it to the rest'}</span>}
+                    <span className={`rounded px-1.5 py-px text-xs font-medium ${r.role === 'primary' ? 'bg-accent text-surface' : r.role === 'secondary' ? 'border border-accent text-accent' : 'bg-sunken text-ink-2'}`}>{new Set(r.roles).size > 1 ? 'mixed' : n > 1 && r.role === 'other' ? 'on' : r.role}</span>
                     <button aria-label={`Remove ${r.path}`} title="Remove (Backspace)" disabled={busy} className="grid h-6 w-6 place-items-center rounded text-ink-3 hover:bg-sunken hover:text-danger" onClick={(e) => (e.stopPropagation(), void remove(r))}>
                       <X size={13} />
                     </button>

@@ -2,8 +2,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { Archive, ArchiveRestore, ChevronDown, ChevronUp, CircleCheck, ExternalLink, Star, Tag, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { serialSaver } from './edits';
 import { bulk, runAction, setArchived } from './actions';
-import { api, invalidateLibrary, useCapabilities, type Item } from './api';
+import { api, invalidateLibrary, useCapabilities, useWhyUnavailable, type Item } from './api';
 import { fullDate } from './format';
 import { Engagement, ItemFull, SourceIcon, TagRow } from './ItemCard';
 import { setSearch } from './nav';
@@ -25,15 +26,11 @@ function NoteEditor({ item }: { item: Item }) {
     ref.current?.focus();
   }, [noteFocus]);
 
-  async function save() {
-    if (text.trim() === (item.note ?? '')) return;
-    try {
-      await api(`/api/items/${item.id}`, { method: 'PATCH', body: { note: text.trim() || null } });
-      invalidateLibrary();
-    } catch (error) {
-      toastError(error);
-    }
-  }
+  // Compared with the last note sent, and sent in order: a change made back while a save is still on its way is saved too.
+  const [saver] = useState(() =>
+    serialSaver(item.note ?? '', (note) => api(`/api/items/${item.id}`, { method: 'PATCH', body: { note: note || null } }).then(invalidateLibrary, toastError)),
+  );
+  const save = () => void saver(text.trim());
   return (
     <textarea
       ref={ref}
@@ -56,6 +53,7 @@ function Heading({ children }: { children: ReactNode }) {
 
 export function Drawer({ id, onClose }: { id: number; onClose: () => void }) {
   const caps = useCapabilities();
+  const why = useWhyUnavailable();
   const hint = useHint();
   // The list's copy shows at once; the detail (thread, media text) replaces it when it arrives.
   const query = useQuery({ queryKey: ['item', id], queryFn: () => api<Item>(`/api/items/${id}`), placeholderData: () => getState().pageItems.get(id) });
@@ -188,7 +186,7 @@ export function Drawer({ id, onClose }: { id: number; onClose: () => void }) {
                           {m.extract_status !== 'none' && ` · ${m.extract_kind ?? 'text'} ${m.extract_status}`}
                         </span>
                         {!m.extract_text && m.extract_status !== 'queued' && (
-                          <button className="btn h-7 px-2 text-xs" disabled={!caps.mediaText} title={caps.mediaText ? hint('Get the text of this item’s media', 'item.mediaText') : 'Media text is not available on this server yet'} onClick={() => openOverlay({ kind: 'mediaText', ids: [item.id] })}>
+                          <button className="btn h-7 px-2 text-xs" disabled={!caps.mediaText} title={caps.mediaText ? hint('Get the text of this item’s media', 'item.mediaText') : why('Media text')} onClick={() => openOverlay({ kind: 'mediaText', ids: [item.id] })}>
                             Get text
                           </button>
                         )}

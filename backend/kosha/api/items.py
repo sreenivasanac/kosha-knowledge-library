@@ -1,16 +1,18 @@
 """Items: list, detail, state changes (single and bulk, with undo), hard delete."""
+import logging
 import math
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, tuple_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
+from kosha import storage
 from kosha.api.tags import attach_tag, detach_tag, get_item
 from kosha.auth import current_user
-from kosha.config import DEFAULT_PAGE_SIZE, PAGE_SIZES, get_settings
+from kosha.config import DEFAULT_PAGE_SIZE, PAGE_SIZES
 from kosha.db import get_session
 from kosha.items_query import ItemFilters, conditions, fetch_page
 from kosha.search.embeddings import EmbeddingError
@@ -22,7 +24,13 @@ from kosha.schemas import BulkIn, BulkOut, ItemDetailOut, ItemOut, ItemPage, Ite
 from kosha.serialize import serialize_items, thread_items
 
 router = APIRouter(tags=["items"])
+log = logging.getLogger(__name__)
 
+# ItemPatch field -> the Item column it changes
+PATCH_COLUMNS = {"starred": "starred", "note": "note", "read": "read_at", "archived": "archived_at"}
+# Item columns an undo batch may hold (the MCP `edit_item` tool also replaces the summary)
+UNDO_ITEM_COLUMNS = ("starred", "note", "read_at", "archived_at", "summary", "summary_method", "summary_status")
+UNDO_DATETIME_COLUMNS = ("read_at", "archived_at")
 ITEM_TAG_COLUMNS = ("item_id", "tag_id", "namespace", "role", "attached_by", "confidence", "removed_by_user")
 
 
@@ -119,16 +127,17 @@ def bulk(body: BulkIn, user: User = Depends(current_user), session: Session = De
     if len(tags) != len(tag_ids):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tag not found")
 
-    before = {
-        "items": [{"id": i.id, "starred": i.starred, "note": i.note,
-                   "read_at": i.read_at.isoformat() if i.read_at else None,
-                   "archived_at": i.archived_at.isoformat() if i.archived_at else None} for i in items],
-        "tag_ids": tag_ids,
-        # The touched item_tags rows as they were; bulk tagging only ever uses
-        # the role "other", so no other tag's row changes.
-        "item_tags": [{c: getattr(row, c) for c in ITEM_TAG_COLUMNS} for row in session.scalars(
-            select(ItemTag).where(ItemTag.item_id.in_(ids), ItemTag.tag_id.in_(tag_ids)))],
-    }
+    # Only what this action changes is kept for undo, so that undoing it does
+    # not also revert a later edit to a field or a tag it never touched.
+    columns = [column for name, column in PATCH_COLUMNS.items()
+               if name in body.model_fields_set and (name == "note" or getattr(body, name) is not None)]
+    plain = lambda value: value.isoformat() if isinstance(value, datetime) else value  # noqa: E731
+    # The item_tags rows as they are now; bulk tagging only ever uses the role
+    # "other", so no other tag's row changes.
+    rows_before = {(row.item_id, row.tag_id): {c: getattr(row, c) for c in ITEM_TAG_COLUMNS} for row in session.scalars(
+        select(ItemTag).where(ItemTag.item_id.in_(ids), ItemTag.tag_id.in_(tag_ids)))}
+    before = {"items": [{"id": i.id, **{c: plain(getattr(i, c)) for c in columns}} for i in items], "tag_ids": tag_ids}
+    changed: set[tuple[int, int]] = set()  # (item, tag) pairs this action attached or detached
     now = datetime.now(UTC)
     for item in items:
         apply_patch(item, body, now)
@@ -136,8 +145,14 @@ def bulk(body: BulkIn, user: User = Depends(current_user), session: Session = De
             existing = session.get(ItemTag, (item.id, tag_id))
             if existing is None or existing.removed_by_user:
                 attach_tag(session, item.id, tags[tag_id])
+                changed.add((item.id, tag_id))
         for tag_id in body.remove_tag_ids:
-            detach_tag(session, item.id, tag_id)
+            existing = session.get(ItemTag, (item.id, tag_id))
+            if existing is not None and not existing.removed_by_user:
+                detach_tag(session, item.id, tag_id)
+                changed.add((item.id, tag_id))
+    before["tag_pairs"] = sorted(changed)
+    before["item_tags"] = [rows_before[pair] for pair in before["tag_pairs"] if pair in rows_before]
     batch = UndoBatch(user_id=user.id, before=before)
     session.add(batch)
     session.commit()
@@ -155,15 +170,11 @@ def undo_batch(session: Session, user_id: int, batch_id: int) -> None:
     before = batch.before
     ids = [row["id"] for row in before["items"]]
     for row in before["items"]:
-        if "starred" not in row:  # a pipeline tag write: only tag rows changed
-            continue
-        session.execute(update(Item).where(Item.id == row["id"], Item.user_id == user_id).values(
-            starred=row["starred"], note=row["note"],
-            read_at=datetime.fromisoformat(row["read_at"]) if row["read_at"] else None,
-            archived_at=datetime.fromisoformat(row["archived_at"]) if row["archived_at"] else None,
-            # the MCP `edit_item` tool also replaces the summary
-            **({k: row[k] for k in ("summary", "summary_method", "summary_status")} if "summary" in row else {}),
-        ))
+        # Only the columns the batch recorded go back (none for a pipeline tag write: only tag rows changed).
+        values = {c: datetime.fromisoformat(row[c]) if c in UNDO_DATETIME_COLUMNS and row[c] else row[c]
+                  for c in UNDO_ITEM_COLUMNS if c in row}
+        if values:
+            session.execute(update(Item).where(Item.id == row["id"], Item.user_id == user_id).values(**values))
     reindex(session, ids)  # notes are searchable
     # An agent's change to the tag tree (MCP `tags`): tags it created go, and
     # tags it renamed, moved, merged or deleted are put back as they were,
@@ -183,7 +194,12 @@ def undo_batch(session: Session, user_id: int, batch_id: int) -> None:
         session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Cannot undo: a tag with the same name now exists in that place") from None
     if before["tag_ids"]:
-        session.execute(delete(ItemTag).where(ItemTag.item_id.in_(ids), ItemTag.tag_id.in_(before["tag_ids"])))
+        # A bulk action lists the (item, tag) pairs it changed; other writers replace every row of their items and tags.
+        pairs = before.get("tag_pairs")
+        if pairs is None:
+            session.execute(delete(ItemTag).where(ItemTag.item_id.in_(ids), ItemTag.tag_id.in_(before["tag_ids"])))
+        elif pairs:
+            session.execute(delete(ItemTag).where(tuple_(ItemTag.item_id, ItemTag.tag_id).in_([tuple(p) for p in pairs])))
         # Tags and items may have been deleted since; their rows are not restored.
         tag_ids = [row["tag_id"] for row in before["item_tags"]]
         live_tags = set(session.scalars(select(Tag.id).where(Tag.user_id == user_id, Tag.id.in_(tag_ids))))
@@ -210,6 +226,19 @@ def undo(batch_id: int, user: User = Depends(current_user), session: Session = D
     undo_batch(session, user.id, batch_id)
 
 
+def remove_media_files(paths: list[str]) -> None:
+    """Delete stored media files (their keys in the media storage). Call after
+    the commit that removed their rows, so a failed delete never orphans rows."""
+    if not paths:
+        return
+    store = storage.get_storage()
+    for key in paths:
+        try:
+            store.delete(key)
+        except storage.ERRORS:  # unreachable storage or a bad key: the row is gone either way
+            log.warning("Could not delete stored media file %s", key)
+
+
 def delete_item(session: Session, user: User, item: Item) -> None:
     """Delete for good: the row, its stored files, and a `deleted_items` record
     so a later sync does not bring the item back. Commits."""
@@ -223,11 +252,7 @@ def delete_item(session: Session, user: User, item: Item) -> None:
     session.execute(update(ItemRelation).where(ItemRelation.to_item_id == item.id).values(to_item_id=None, target_state="missing"))
     session.delete(item)
     session.commit()
-    root = get_settings().kosha_media_dir.resolve()
-    for path in files:  # after the commit, so a failed delete never orphans rows
-        target = (root / path).resolve()  # paths are stored relative to the media folder
-        if target.is_relative_to(root):
-            target.unlink(missing_ok=True)
+    remove_media_files(files)
 
 
 @router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

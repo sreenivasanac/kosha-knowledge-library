@@ -41,7 +41,8 @@ def _llm_error(exc: llm.LLMError) -> HTTPException:
 def ask(body: AskIn, user: User = Depends(current_user), session: Session = Depends(get_session)) -> dict:
     """Answer a question from the library: `{answer, items, steps, spent, took_ms}`.
     `items` are the cited item ids in the order cited; `steps` are the read-only
-    pipelines it ran. 402 when the monthly LLM cap is used up."""
+    pipelines it ran. 402 when the monthly LLM cap is used up; 503 "no LLM key
+    configured" when the model's provider has no key (nothing is sent)."""
     try:
         return ask_module.ask(session, user.id, body.question, body.max_steps)
     except llm.LLMError as exc:
@@ -53,7 +54,7 @@ def ask_stream(body: AskIn, user: User = Depends(current_user)) -> StreamingResp
     """The same as `POST /api/ask`, as server-sent events: one `step` event
     per pipeline as it finishes, then `done` with the full answer, or `error`
     with `{status, message}`: the status `POST /api/ask` would have answered
-    with (402 when the monthly LLM cap is used up, 503 when the model cannot be reached)."""
+    with (402 when the monthly LLM cap is used up, 503 when no LLM key is configured or the model cannot be reached)."""
     events: queue.Queue = queue.Queue()
     user_id = user.id
 
@@ -88,7 +89,9 @@ def _rows(body: MediaTextIn, user: User, session: Session):
 @router.post("/media-text/estimate")
 def media_text_estimate(body: MediaTextIn, user: User = Depends(current_user), session: Session = Depends(get_session)) -> dict:
     """What extracting the text of these items' media would cost:
-    `{n_media, minutes, images, unknown_duration, estimate_usd}`. Media that already has text is not
+    `{n_media, minutes, expected_billed_minutes, images, unknown_duration, estimate_usd, provider, model}`.
+    `minutes` is all the recorded time, `expected_billed_minutes` what is left after the share the speech
+    pre-filter usually skips, priced at `provider`'s rate for `model`. Media that already has text is not
     counted; `unknown_duration` recordings have no length yet and are not in the estimate."""
     return media_text.estimate(session, user.id, _rows(body, user, session))
 
@@ -101,7 +104,7 @@ def media_text_start(body: MediaTextIn, user: User = Depends(current_user), sess
 
     With `all`, or an estimate over MEDIA_TEXT_CONFIRM_ABOVE_USD, the request
     must carry `confirm_usd` at or above the current estimate. Otherwise 409
-    `{detail: {message, n_media, minutes, images, unknown_duration, estimate_usd}}`
+    `{detail: {message, n_media, minutes, expected_billed_minutes, images, unknown_duration, estimate_usd, provider, model}}`
     and nothing is queued: show the estimate, then send it back as `confirm_usd`."""
     rows = _rows(body, user, session)
     estimate = media_text.estimate(session, user.id, rows)

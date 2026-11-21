@@ -3,7 +3,7 @@
  * buttons and the bulk bar all call `runAction(id)`, so behaviour lives once.
  * Single-item actions apply to the selection when one exists (`targetIds`).
  */
-import { api, fetchItems, flattenTags, invalidateLibrary, listOfQuery, queryClient, tagsQuery, type Item, type ItemPage, type TagNode } from './api';
+import { api, ApiError, fetchItems, flattenTags, invalidateLibrary, listOfQuery, queryClient, tagsQuery, type Item, type ItemPage, type TagNode } from './api';
 import { currentSearch, goQuery, goTo, hasDrawer, isLibraryPath, pathname, setSearch, withDefaults } from './nav';
 import { toggleToken } from './query';
 import { activeId, closeOverlay, drawerId, getState, openOverlay, setState, targetIds, toast, toastError } from './store';
@@ -66,16 +66,19 @@ export async function bulk(ids: number[], change: Record<string, unknown>, messa
 }
 
 export async function undo(batch?: number) {
-  const stack = getState().undoStack;
-  const id = batch ?? stack.at(-1);
+  const id = batch ?? getState().undoStack.at(-1);
   if (id == null) return toast('Nothing to undo');
+  // A request that never got an answer (offline, server error) can be tried again; a refusal cannot.
+  let retry = false;
   try {
     await api(`/api/undo/${id}`, { method: 'POST' });
     toast('Undone');
   } catch (error) {
+    retry = !(error instanceof ApiError) || error.status >= 500;
     toastError(error);
   }
-  setState({ undoStack: stack.filter((b) => b !== id) });
+  // Read the stack now, not before the request: a change made meanwhile has added its own batch.
+  if (!retry) setState({ undoStack: getState().undoStack.filter((b) => b !== id) });
   invalidateLibrary();
 }
 

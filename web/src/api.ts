@@ -1,7 +1,7 @@
 /** Typed access to the Kosha backend. All calls are relative (/api, /media). */
 import { QueryClient, useQuery } from '@tanstack/react-query';
 import type { Mode } from './constants';
-import { CSRF_HEADER_VALUE, DEFAULT_SORT } from './constants';
+import { CSRF_HEADER_VALUE, DEFAULT_SORT, DEMO_UNAVAILABLE, STORAGE_KEYS } from './constants';
 import { tokenize } from './query';
 
 export interface Author {
@@ -150,25 +150,28 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public position?: number,
+    /** `demo` when the demo server refused the action. */
+    public code?: string,
   ) {
     super(message);
   }
 }
 
-export async function api<T = unknown>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function api<T = unknown>(path: string, init: { method?: string; body?: unknown; form?: FormData } = {}): Promise<T> {
   const response = await fetch(path, {
     method: init.method ?? 'GET',
     credentials: 'same-origin',
     // The backend's CSRF guard requires this header on every cookie-authenticated write.
     headers: { 'X-Requested-With': CSRF_HEADER_VALUE, ...(init.body === undefined ? {} : { 'content-type': 'application/json' }) },
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    // A form (file upload) goes as multipart; the browser sets its content type.
+    body: init.form ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
   });
   if (response.ok) return (response.status === 204 ? undefined : await response.json()) as T;
   const payload = await response.json().catch(() => null);
   const detail = payload?.detail;
   // Session expired: drop the cached user so the router sends the user to the login page.
-  if (response.status === 401 && !path.startsWith('/api/auth/')) queryClient.setQueryData(['me'], null);
-  if (detail && typeof detail === 'object' && !Array.isArray(detail)) throw new ApiError(response.status, detail.message ?? 'Request failed', detail.position);
+  if (response.status === 401 && !path.startsWith('/api/auth/')) setMe(null);
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) throw new ApiError(response.status, detail.message ?? 'Request failed', detail.position, detail.code);
   const message = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d) => d.msg).join('; ') : response.statusText;
   throw new ApiError(response.status, message || `HTTP ${response.status}`);
 }
@@ -206,8 +209,12 @@ export interface Capabilities {
   mediaStatus: boolean;
   /** Rename and delete a list. */
   listEdit: boolean;
+  import: boolean;
+  export: boolean;
+  /** Change your own display name (`PATCH /api/auth/me`). */
+  rename: boolean;
 }
-const NO_CAPABILITIES: Capabilities = { search: false, parse: false, suggest: false, savedViews: false, lists: false, jev: false, mediaText: false, removals: false, tokens: false, sync: false, ask: false, askStream: false, query: false, spend: false, mediaStatus: false, listEdit: false };
+const NO_CAPABILITIES: Capabilities = { search: false, parse: false, suggest: false, savedViews: false, lists: false, jev: false, mediaText: false, removals: false, tokens: false, sync: false, ask: false, askStream: false, query: false, spend: false, mediaStatus: false, listEdit: false, import: false, export: false, rename: false };
 
 async function fetchCapabilities(): Promise<Capabilities> {
   const doc = await api<{ paths: Record<string, Record<string, { parameters?: { name: string }[] }>> }>('/api/openapi.json');
@@ -229,11 +236,16 @@ async function fetchCapabilities(): Promise<Capabilities> {
     spend: has('/api/spend'),
     mediaStatus: has('/api/media-text/status'),
     listEdit: !!doc.paths['/api/lists/{list_id}']?.delete,
+    import: has('/api/import'),
+    export: has('/api/export'),
+    rename: !!doc.paths['/api/auth/me']?.patch,
   };
 }
 export const capabilitiesQuery = { queryKey: ['capabilities'], queryFn: fetchCapabilities, staleTime: 60_000 };
-export const useCapabilities = (): Capabilities => useQuery(capabilitiesQuery).data ?? NO_CAPABILITIES;
-export const getCapabilities = (): Capabilities => queryClient.getQueryData<Capabilities>(['capabilities']) ?? NO_CAPABILITIES;
+/** The demo server refuses these, so the app shows their controls as unavailable. */
+const inDemo = (caps: Capabilities, demo: boolean): Capabilities => (demo ? { ...caps, ask: false, askStream: false, jev: false, mediaText: false, tokens: false, import: false } : caps);
+export const useCapabilities = (): Capabilities => inDemo(useQuery(capabilitiesQuery).data ?? NO_CAPABILITIES, useIsDemo());
+export const getCapabilities = (): Capabilities => inDemo(queryClient.getQueryData<Capabilities>(['capabilities']) ?? NO_CAPABILITIES, !!queryClient.getQueryData<Me | null>(['me'])?.demo);
 
 export interface ItemsParams {
   q: string;
@@ -327,7 +339,57 @@ export const statsQuery = { queryKey: ['stats'], queryFn: () => api<Record<strin
 export const facetsQuery = { queryKey: ['facets'], queryFn: () => api<{ sources: { value: string; count: number }[]; years: { value: string; count: number }[] }>('/api/facets') };
 export const settingsQuery = { queryKey: ['settings'], queryFn: () => api<Record<string, boolean | number | string>>('/api/settings') };
 export const keybindingsQuery = { queryKey: ['keybindings'], queryFn: () => api<Record<string, string>>('/api/keybindings'), staleTime: Infinity };
-export const meQuery = { queryKey: ['me'], queryFn: () => api<{ id: number; email: string }>('/api/auth/me').catch(() => null), staleTime: Infinity };
+/** The signed-in person. The fields after `email` are absent on a server from before accounts had roles. */
+export interface Me {
+  id: number;
+  email: string;
+  name?: string | null;
+  role?: 'admin' | 'user';
+  demo?: boolean;
+  onboarding_completed?: boolean;
+}
+export const meQuery = { queryKey: ['me'], queryFn: () => api<Me>('/api/auth/me').catch(() => null), staleTime: Infinity };
+export const useIsDemo = () => !!useQuery(meQuery).data?.demo;
+/** The tooltip of a control that cannot be used: off in the demo, or missing on this server. */
+export const useWhyUnavailable = () => {
+  const demo = useIsDemo();
+  return (what: string) => (demo ? DEMO_UNAVAILABLE : `${what} is not available on this server yet`);
+};
+/** A server without roles has one account, which is the admin. */
+export const isAdmin = (me: Me | null | undefined) => !!me && (me.role ?? 'admin') === 'admin' && !me.demo;
+
+export const hasSessionHint = () => {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.session) === '1';
+  } catch {
+    return true; // no storage: always ask the server
+  }
+};
+/** Records who is signed in (or that nobody is), in the cache and as the hint the landing page reads. */
+export function setMe(me: Me | null) {
+  queryClient.setQueryData(['me'], me);
+  try {
+    if (me) localStorage.setItem(STORAGE_KEYS.session, '1');
+    else localStorage.removeItem(STORAGE_KEYS.session);
+  } catch {
+    /* private mode: the hint is only an optimisation */
+  }
+}
+
+/** `GET /api/public-config`: what a visitor who is not signed in may know about this server. */
+export interface PublicConfig {
+  app_name: string;
+  version: string;
+  has_users: boolean;
+  signups: 'open' | 'invite' | 'closed';
+  landing: boolean;
+  demo: { email: string; password: string; notice: string } | null;
+  demo_url: string | null;
+  links: { github?: string; docs?: string };
+}
+/** What a server without the endpoint is taken to be: one account made from `.env`, sign-in only. */
+export const LEGACY_CONFIG: PublicConfig = { app_name: 'Kosha', version: '', has_users: true, signups: 'closed', landing: false, demo: null, demo_url: null, links: {} };
+export const publicConfigQuery = { queryKey: ['public-config'], queryFn: () => api<PublicConfig>('/api/public-config').catch(() => LEGACY_CONFIG), staleTime: 60_000 };
 
 export const useSavedViews = () => {
   const enabled = useCapabilities().savedViews;

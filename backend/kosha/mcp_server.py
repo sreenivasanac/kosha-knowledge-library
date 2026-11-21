@@ -123,6 +123,7 @@ def _tag_op(session, user: User, namespace: str, op: dict) -> str:
     - every change first saves what it replaces as an undo batch.
     - a merge never brings back a tag the user removed from an item."""
     kind, path = str(op.get("op", "")).lower(), str(op.get("path", "")).strip()
+    tags_api.lock_tree(session, user.id)  # before the tree is read: see lock_tree
     if kind == "create":
         if writes.find_tag(session, user.id, namespace, path) is not None:
             return f"exists {path}"
@@ -306,10 +307,12 @@ async def add_item(url: str | None = None, text: str | None = None, title: str |
 
 
 # --- jobs -------------------------------------------------------------------
-_embed_job: dict = {"running": False, "last": None}
+_embed_jobs: dict[int, dict] = {}  # user id -> {"running", "last"}: one embed job per user, and nobody sees another's
 
 
 def _embed_in_background(user_id: int) -> None:
+    _embed_job = _embed_jobs.setdefault(user_id, {"running": False, "last": None})
+
     def work():
         try:
             with SessionLocal() as session:
@@ -332,6 +335,7 @@ def _embed_in_background(user_id: int) -> None:
                       "  sync       run the official X API bookmark sync once (does nothing unless the user turned it on)")
 async def jobs(action: str = "status") -> str:
     def work(session, user):
+        _embed_job = _embed_jobs.setdefault(user.id, {"running": False, "last": None})
         if action == "summarize":
             return "summarize: " + _fmt(summarize(session, user.id))
         if action == "embed":

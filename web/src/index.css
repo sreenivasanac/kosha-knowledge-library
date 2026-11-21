@@ -22,8 +22,29 @@
   /* Width of the reader drawer; the page reserves the same space on wide screens. */
   --drawer-w: clamp(420px, calc(100vw - 1000px), 560px);
 }
+/* Dark follows the system unless Settings picked a theme (`data-theme` on <html>, see prefs.ts).
+   The two dark blocks hold the same values: one for "system", one for an explicit choice. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0f1318;
+  --surface: #171c23;
+  --sunken: #0b0e12;
+  --ink: #e7eaee;
+  --ink-2: #b6bec9;
+  --ink-3: #8b95a2;
+  --line: #29313b;
+  --accent: #a3adff;
+  --accent-soft: #232a52;
+  --mark: #f0b429;
+  --danger: #ff8a80;
+  --ok: #6fd39c;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 10px 32px rgb(0 0 0 / 0.5);
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --bg: #0f1318;
     --surface: #171c23;
     --sunken: #0b0e12;

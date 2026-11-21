@@ -11,8 +11,8 @@ from constella.jev import JevError, Question
 from sqlalchemy.orm import Session
 
 from kosha import jev
-from kosha.config import get_settings
-from kosha.search.embeddings import record_spend
+from kosha.keys import get_key
+from kosha.search.embeddings import EmbeddingError, check_cap, record_spend
 
 # --- Tunables ---------------------------------------------------------------
 METHODS = ("none", "voyage", "jev")
@@ -35,9 +35,13 @@ class RerankError(RuntimeError):
 
 
 def _voyage(session: Session, user_id: int, query: str, ids: list[int], texts: dict[int, str]) -> tuple[dict[int, float], float]:
-    key = get_settings().voyage_api_key
+    key = get_key("voyage")
     if not key:
         raise RerankError("VOYAGE_API_KEY is not set")
+    try:
+        check_cap(session, user_id)
+    except EmbeddingError as exc:
+        raise RerankError(str(exc)) from None
     try:
         response = httpx.post(VOYAGE_RERANK_URL, headers={"Authorization": f"Bearer {key}"}, timeout=VOYAGE_TIMEOUT_S,
                               json={"query": query, "documents": [texts[i] for i in ids], "model": VOYAGE_RERANK_MODEL})

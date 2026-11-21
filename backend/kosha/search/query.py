@@ -813,10 +813,11 @@ class _Compiler:
                              func.lower(target.author_handle) == v.lstrip("@").lower())
         if key == "thread":
             same = aliased(Item)
+            mine = select(same.id).where(same.id == v, same.user_id == self.user_id).scalar_subquery()  # the user's own item only
             root = func.coalesce(
                 select(ItemRelation.to_source_id).where(
-                    ItemRelation.from_item_id == v, ItemRelation.relation == "thread_member").limit(1).scalar_subquery(),
-                select(same.source_id).where(same.id == v).scalar_subquery())
+                    ItemRelation.from_item_id == mine, ItemRelation.relation == "thread_member").limit(1).scalar_subquery(),
+                select(same.source_id).where(same.id == v, same.user_id == self.user_id).scalar_subquery())
             return or_(Item.source_id == root, _relation("thread_member", ItemRelation.to_source_id == root))
         if key == "folder":
             return exists().where(ItemCollection.item_id == Item.id, ItemCollection.collection_id == Collection.id,
@@ -922,7 +923,9 @@ def compile_filter(session: Session, user_id: int, query: Query, lift_rank_atoms
     if "archived" not in query.include and not _mentions_archived(query.filter):
         where.append(Item.archived_at.is_(None))
     if query.filter is not None:
-        compiler = _Compiler(session, user_id, query.rank_atoms if lift_rank_atoms else (), namespace)
+        # A term scoped to a field (`title:x`, `in:note x`) stays a filter: the semantic ranker cannot honour the field.
+        lifted = tuple(a for a in query.rank_atoms if not a.fields) if lift_rank_atoms else ()
+        compiler = _Compiler(session, user_id, lifted, namespace)
         root = query.filter if isinstance(query.filter, And) else And((query.filter,))
         where.append(compiler.node(root))
     return where

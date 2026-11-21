@@ -1,37 +1,18 @@
 /** Settings: storage, X API sync and spend, media text, API tokens, the extension, and key remapping. */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { askExtension, getExtensionId } from './ArchiveTools';
-import { api, keybindingsQuery, settingsQuery, useCapabilities } from './api';
-import { SEQUENCE_TIMEOUT_MS, STORAGE_KEYS } from './constants';
+import { Link, useSearch } from '@tanstack/react-router';
+import { Account, ApiKeys, Export, Import, Instance, Storage, Users } from './AdminSettings';
+import { api, isAdmin, keybindingsQuery, meQuery, settingsQuery, useCapabilities, useIsDemo } from './api';
+import { DEMO_UNAVAILABLE, SEQUENCE_TIMEOUT_MS, STORAGE_KEYS } from './constants';
 import { ago, fullDate, shortDate, usd } from './format';
 import { startSync } from './Palette';
 import { syncQuery, xApiSync } from './Shell';
 import { ACTIONS, defaultBindings, findConflicts, resolveBindings, strokeOf, type Area } from './keymap';
 import { openOverlay, toast, toastError } from './store';
 import { PageHeader } from './TagsPage';
-import { ErrorNote, Keys, Unavailable } from './ui';
-
-function Card({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="space-y-3 rounded-lg border border-line bg-surface p-4">
-      <h2 className="font-semibold">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function Toggle({ label, help, checked, onChange }: { label: string; help: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="flex items-start gap-3">
-      <input type="checkbox" role="switch" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-1 h-4 w-4 accent-(--accent)" />
-      <span>
-        <span className="block text-sm font-medium">{label}</span>
-        <span className="block text-sm text-ink-2">{help}</span>
-      </span>
-    </label>
-  );
-}
+import { Card, ErrorNote, Keys, Toggle, Unavailable } from './ui';
 
 /**
  * What a status endpoint reports, as label and value rows. The server owns the
@@ -239,7 +220,8 @@ function Tokens() {
   );
 }
 
-function Extension() {
+export function Extension() {
+  const demo = useIsDemo();
   const [id, setId] = useState(getExtensionId);
   const [status, setStatus] = useState('');
   async function test() {
@@ -253,10 +235,13 @@ function Extension() {
   }
   return (
     <form className="space-y-2" onSubmit={(e) => (e.preventDefault(), void test())}>
+      {demo && <Unavailable what="Connecting the extension" />}
       <p className="text-sm text-ink-2">The Archive page asks the extension to remove items at their sources. Its id is on the browser’s extensions page.</p>
       <div className="flex gap-2">
         <input aria-label="Extension id" placeholder="Extension id" spellCheck={false} className="field flex-1" value={id} onChange={(e) => setId(e.target.value)} />
-        <button className="btn">Save and test</button>
+        <button className="btn" disabled={demo} title={demo ? DEMO_UNAVAILABLE : undefined}>
+          Save and test
+        </button>
       </div>
       {status && (
         <p role="status" className="text-sm text-ink-2">
@@ -367,12 +352,12 @@ function Keybindings() {
   );
 }
 
-function CapForm({ stored, save }: { stored: number | undefined; save: (usd: number) => void }) {
+export function CapForm({ stored, save, label = 'Monthly cap (USD)' }: { stored: number | undefined; save: (usd: number) => void; label?: string }) {
   const [cap, setCap] = useState(String(stored ?? ''));
   return (
     <form className="flex items-end gap-2" onSubmit={(e) => (e.preventDefault(), Number(cap) >= 0 && save(Number(cap)))}>
       <label className="grid gap-1 text-sm font-medium">
-        Monthly cap (USD)
+        {label}
         <input type="number" min={0} step={0.5} className="field w-32" value={cap} onChange={(e) => setCap(e.target.value)} />
       </label>
       <button className="btn" disabled={cap === '' || Number(cap) === stored}>
@@ -387,6 +372,11 @@ export function SettingsPage() {
   const caps = useCapabilities();
   const settings = useQuery(settingsQuery);
   const s = settings.data ?? {};
+  const me = useQuery(meQuery).data;
+  // The admin tab exists only for an admin; in the demo nobody is one.
+  const tabs = [{ id: 'general', label: 'General' }, { id: 'account', label: 'Account' }, { id: 'data', label: 'Import and export' }, ...(isAdmin(me) ? [{ id: 'admin', label: 'Admin' }] : [])];
+  const asked = (useSearch({ strict: false }) as { tab?: string }).tab;
+  const tab = tabs.some((t) => t.id === asked) ? asked! : 'general';
 
   async function patch(body: Record<string, unknown>) {
     try {
@@ -396,15 +386,12 @@ export function SettingsPage() {
       toastError(error);
     }
   }
-  return (
-    <div className="px-3 py-4 sm:px-5">
-      <PageHeader title="Settings" />
-      {settings.isPending ? (
-        <div className="skeleton h-64 max-w-2xl" aria-busy="true" />
-      ) : settings.error ? (
-        <ErrorNote error={settings.error} retry={() => void settings.refetch()} />
-      ) : (
-        <div className="max-w-2xl space-y-4">
+  const general = settings.isPending ? (
+    <div className="skeleton h-64 max-w-2xl" aria-busy="true" />
+  ) : settings.error ? (
+    <ErrorNote error={settings.error} retry={() => void settings.refetch()} />
+  ) : (
+    <>
           <Card title="Stored media">
             <Toggle label="Store images" help="Keeps photos in Kosha so they still load if the source removes them." checked={!!s.store_images} onChange={(v) => void patch({ store_images: v })} />
             <Toggle label="Store videos" help="Keeps video and audio files too. They take far more space; previews are always stored." checked={!!s.store_videos} onChange={(v) => void patch({ store_videos: v })} />
@@ -430,6 +417,8 @@ export function SettingsPage() {
               Transcripts for video and audio, and descriptions for images. In the library, press <kbd className="kbd">m</kbd> on an item, or select items and choose Media text: that runs for the selection only. You see the count, the minutes and the cost before anything runs.
             </p>
             {!caps.mediaText && <Unavailable what="Media text" />}
+            {/* Shown when the server has the setting. */}
+            {'media_text_auto' in s && <Toggle label="Get media text for new items automatically" help="Runs as items arrive, within the monthly cap. Off: you choose the items and see the cost first." checked={!!s.media_text_auto} onChange={(v) => void patch({ media_text_auto: v })} />}
             {caps.mediaStatus && <MediaTextStatusFacts />}
             {/* The whole library is the expensive case, so it is the quiet button and only opens the estimate. */}
             <button className="btn btn-ghost px-2 text-sm text-ink-2" disabled={!caps.mediaText} onClick={() => openOverlay({ kind: 'mediaText', ids: 'all' })}>
@@ -445,8 +434,62 @@ export function SettingsPage() {
           <Card title="Keyboard">
             <Keybindings />
           </Card>
-        </div>
-      )}
+    </>
+  );
+  return (
+    <div className="px-3 py-4 sm:px-5">
+      <PageHeader title="Settings">
+        <Link to="/onboarding" className="btn">
+          Setup guide
+        </Link>
+      </PageHeader>
+      <div role="tablist" aria-label="Settings sections" className="mb-4 flex max-w-2xl gap-1 overflow-x-auto border-b border-line">
+        {tabs.map((t) => (
+          <Link key={t.id} to="/settings" search={{ tab: t.id === 'general' ? undefined : t.id }} role="tab" aria-selected={t.id === tab} className={`-mb-px whitespace-nowrap border-b-2 px-3 py-2 text-sm ${t.id === tab ? 'border-accent font-semibold text-ink' : 'border-transparent text-ink-2 hover:text-ink'}`}>
+            {t.label}
+          </Link>
+        ))}
+        {me?.demo && (
+          <span role="tab" aria-disabled="true" aria-selected={false} title={DEMO_UNAVAILABLE} className="cursor-not-allowed whitespace-nowrap px-3 py-2 text-sm text-ink-3 opacity-60">
+            Admin
+          </span>
+        )}
+      </div>
+      <div role="tabpanel" className={`space-y-4 ${tab === 'admin' ? 'max-w-4xl' : 'max-w-2xl'}`}>
+        {tab === 'general' && general}
+        {tab === 'account' && (
+          <Card title="Account">
+            <Account />
+          </Card>
+        )}
+        {tab === 'data' && (
+          <>
+            <Card title="Import">
+              <Import />
+            </Card>
+            <Card title="Export">
+              <Export />
+            </Card>
+          </>
+        )}
+        {tab === 'admin' && (
+          <>
+            <Card title="Users">
+              <Users />
+            </Card>
+            <Card title="Instance">
+              <Instance />
+            </Card>
+            <Card title="API keys">
+              <p className="text-sm text-ink-2">Keys for the optional AI features, for everyone on this server. Kosha works without any of them: keyword search and tagging by hand.</p>
+              <ApiKeys />
+            </Card>
+            <Card title="Storage">
+              <Storage />
+            </Card>
+          </>
+        )}
+      </div>
     </div>
   );
 }
