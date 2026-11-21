@@ -1,0 +1,15 @@
+# The image is built from the repository root (see backend/Dockerfile).
+# Everything is left out except what the build copies.
+*
+!backend/pyproject.toml
+!backend/uv.lock
+!backend/README.md
+!backend/alembic.ini
+!backend/alembic/
+!backend/kosha/
+!web/
+web/node_modules
+web/dist
+**/__pycache__
+**/*.pyc
+**/.DS_Store

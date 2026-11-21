@@ -1,23 +1,12 @@
-# Kosha: API server, worker and Postgres with pgvector.
-# NOT TESTED: written on a machine without Docker.
-# Secrets (KOSHA_SECRET_KEY, KOSHA_ADMIN_EMAIL, KOSHA_ADMIN_PASSWORD,
-# KOSHA_API_TOKEN, API keys) come from .env; DATABASE_URL is set here.
-x-backend: &backend
-  build: ./backend
-  env_file: .env
-  environment:
-    DATABASE_URL: postgresql+psycopg://kosha:kosha@db:5432/kosha
-    KOSHA_MEDIA_DIR: /data/media
-  volumes:
-    - ./data:/data
-  depends_on:
-    db:
-      condition: service_healthy
-  restart: unless-stopped
+# Kosha: the app (API server + web app, one container) and Postgres with pgvector.
+#   cp .env.example .env   # then set the three required values
+#   docker compose up -d   # http://localhost:8080
+name: kosha
 
 services:
   db:
-    image: pgvector/pgvector:pg17  # includes pg_trgm and ltree
+    image: pgvector/pgvector:pg17  # has vector, pg_trgm and ltree; the first migration enables them
+    # Reachable only from the app container (no host port), so a fixed password is enough.
     environment:
       POSTGRES_USER: kosha
       POSTGRES_PASSWORD: kosha
@@ -32,14 +21,33 @@ services:
     restart: unless-stopped
 
   app:
-    <<: *backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://kosha:kosha@db:5432/kosha
+      KOSHA_MEDIA_DIR: /data/media
+      # Fail with a clear message instead of starting half-configured.
+      KOSHA_SECRET_KEY: ${KOSHA_SECRET_KEY:?set KOSHA_SECRET_KEY in .env}
+      KOSHA_ADMIN_EMAIL: ${KOSHA_ADMIN_EMAIL:?set KOSHA_ADMIN_EMAIL in .env}
+      KOSHA_ADMIN_PASSWORD: ${KOSHA_ADMIN_PASSWORD:?set KOSHA_ADMIN_PASSWORD in .env}
     ports:
-      - "127.0.0.1:8000:8000"  # the reverse proxy sits in front
-
-  worker:
-    <<: *backend
-    # Until the job queue exists, the worker's one job is the media store.
-    command: ["sh", "-c", "while true; do kosha media-fetch; sleep 300; done"]
+      # This machine only. Put a reverse proxy with HTTPS in front to expose it (deploy/README.md).
+      - "127.0.0.1:${KOSHA_PORT:-8080}:8000"
+    volumes:
+      - media:/data/media
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
 
 volumes:
   pgdata:
+  media:

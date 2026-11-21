@@ -13,6 +13,7 @@ import anyio
 from fastapi import HTTPException
 from mcp.server.mcpserver import MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPASGIApp
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy import select, text
 from starlette.responses import JSONResponse
 
@@ -416,7 +417,15 @@ class McpEndpoint:
 
     def __init__(self):
         # Stateless JSON responses: every call stands alone, so there is no session to resume or expire.
-        mcp.streamable_http_app(streamable_http_path=MCP_PATH, json_response=True, stateless_http=True)
+        mcp.streamable_http_app(
+            streamable_http_path=MCP_PATH,
+            json_response=True,
+            stateless_http=True,
+            # The SDK's Host-header check guards unauthenticated local servers against DNS rebinding.
+            # Every call here needs a bearer token, which a rebinding page cannot supply, and the
+            # check would reject any public hostname, so it is turned off.
+            transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        )
         self.session_manager = mcp.session_manager
         self.app = StreamableHTTPASGIApp(self.session_manager)
 
