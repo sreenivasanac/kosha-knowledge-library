@@ -1,16 +1,18 @@
 """Authentication: one admin account, session cookie for the web app, bearer
 API tokens for the extension and MCP."""
 import hashlib
+import time
+from collections import defaultdict, deque
 from datetime import UTC, datetime
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from kosha.config import get_settings
+from kosha.config import CSRF_HEADER, CSRF_HEADER_VALUE, LOGIN_MAX_FAILURES, LOGIN_WINDOW_S, get_settings
 from kosha.db import get_session
 from kosha.models import ApiToken, User
 
@@ -41,6 +43,10 @@ def create_admin(session: Session) -> User:
     if not settings.kosha_admin_email or not settings.kosha_admin_password:
         raise ValueError("KOSHA_ADMIN_EMAIL and KOSHA_ADMIN_PASSWORD must be set")
     user = session.scalar(select(User).where(User.email == settings.kosha_admin_email))
+    if user is None and session.scalar(select(func.count()).select_from(User)) == 1:
+        # The admin's email was changed in the environment: same account.
+        user = session.scalar(select(User))
+        user.email = settings.kosha_admin_email
     if user is None:
         user = User(email=settings.kosha_admin_email, password_hash="")
         session.add(user)
@@ -69,12 +75,18 @@ def current_user(request: Request, session: Session = Depends(get_session)) -> U
             user = session.get(User, token.user_id)
     elif request.session.get("uid"):
         user = session.get(User, request.session["uid"])
+        if (user is not None and request.method not in ("GET", "HEAD", "OPTIONS")
+                and request.headers.get(CSRF_HEADER) != CSRF_HEADER_VALUE):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing header {CSRF_HEADER}: {CSRF_HEADER_VALUE}")
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     return user
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+_login_failures: dict[str, deque] = defaultdict(deque)  # client address -> times of failed logins
 
 
 class LoginIn(BaseModel):
@@ -89,8 +101,19 @@ class UserOut(BaseModel):
 
 @router.post("/login", response_model=UserOut)
 def login(body: LoginIn, request: Request, session: Session = Depends(get_session)):
+    # ponytail: in-process and keyed by the peer address; behind a reverse
+    # proxy every client shares one address, so limit there as well.
+    address = request.client.host if request.client else "unknown"
+    failures = _login_failures[address]
+    now = time.monotonic()
+    while failures and now - failures[0] > LOGIN_WINDOW_S:
+        failures.popleft()
+    if len(failures) >= LOGIN_MAX_FAILURES:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many failed logins; wait a minute")
     user = session.scalar(select(User).where(User.email == body.email))
+    # An unknown email answers at once, without running the password hash.
     if user is None or not verify_password(user.password_hash, body.password):
+        failures.append(now)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
     request.session["uid"] = user.id
     return user

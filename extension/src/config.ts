@@ -28,7 +28,7 @@ export const API = {
  * equals the configured server origin. A pattern without a port matches
  * every port. Add your own host here and rebuild if Kosha is not on localhost.
  */
-export const EXTERNALLY_CONNECTABLE = ['http://localhost/*', 'http://127.0.0.1/*'];
+export const EXTERNALLY_CONNECTABLE = ['http://localhost/*', 'http://127.0.0.1/*', 'https://kosha.pragnyalabs.com/*'];
 
 /** Hosts the service worker may call without asking. Others are requested when the URL is saved. */
 export const LOCAL_SERVER_HOSTS = ['http://localhost/*', 'http://127.0.0.1/*'];

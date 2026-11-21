@@ -126,6 +126,10 @@ class ItemOut(BaseModel):
     quoted: "ItemOut | None" = None  # the quoted post, nested one level, when held
     reply_to: RelationOut | None
     thread: ThreadInfo | None
+    # Search results only. `snippet` is HTML-escaped text whose only tags are
+    # <mark>…</mark> around the matching words; `score` is the fused rank score.
+    snippet: str | None = None
+    score: float | None = None
 
 
 class ItemDetailOut(ItemOut):
@@ -138,6 +142,14 @@ class ItemPage(BaseModel):
     page_size: int
     total: int
     pages: int
+    # Set when `q` was given.
+    mode: str | None = None  # hybrid, keyword, semantic or filter: what actually ran
+    query: str | None = None  # the canonical form of `q`
+    # A ranked result is a stored snapshot; send this back to page through it.
+    snapshot_id: int | None = None
+    refreshed: bool = False  # the snapshot sent had expired and the search ran again
+    notice: str | None = None  # no_exact_matches | semantic_unavailable
+    took_ms: float | None = None
 
 
 class ItemPatch(BaseModel):
@@ -223,3 +235,83 @@ class FacetCount(BaseModel):
 class Facets(BaseModel):
     sources: list[FacetCount]
     years: list[FacetCount]
+
+
+# --- Search bar, saved views, lists, removals ---------------------------------
+class Suggestion(BaseModel):
+    insert: str  # text that replaces `replace_range`
+    label: str
+    count: int | None  # results if this is added to the rest of the bar
+    kind: str  # key, value, author, tag, set, recent, view, hint
+
+
+class SuggestOut(BaseModel):
+    replace_range: tuple[int, int]
+    suggestions: list[Suggestion]
+
+
+class ParseIn(BaseModel):
+    q: str
+
+
+class QueryErrorOut(BaseModel):
+    message: str
+    position: int
+
+
+class ParseOut(BaseModel):
+    ok: bool
+    canonical: str | None = None
+    # One per token: {start, end, text, kind (text|qualifier|tag|set|operator), negated, key?, value?}
+    chips: list[dict[str, Any]] = []
+    has_text: bool = False  # there are words to rank by, so the search will be hybrid
+    error: QueryErrorOut | None = None
+
+
+class SavedViewIn(BaseModel):
+    name: str = Field(min_length=1)
+    query: str = ""
+    params: dict[str, Any] | None = None  # the UI's own state (mode, sort, layout)
+
+
+class SavedViewPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    query: str | None = None
+    params: dict[str, Any] | None = None
+
+
+class SavedViewOut(SavedViewIn):
+    id: int
+    created_at: datetime
+
+
+class ListIn(BaseModel):
+    name: str = Field(min_length=1)
+    description: str | None = None
+
+
+class ListOut(ListIn):
+    id: int
+    created_at: datetime
+    count: int
+
+
+class ListDetailOut(ListOut):
+    items: list[ItemOut]  # in the list's own order
+
+
+class ListItemsIn(BaseModel):
+    item_ids: list[int] = Field(min_length=1)
+
+
+class RemovalOut(BaseModel):
+    item_id: int
+    source: str
+    source_id: str  # X: the numeric post id; LinkedIn: urn:li:activity:…
+    url: str | None
+
+
+class RemovalResultIn(BaseModel):
+    item_id: int
+    status: Literal["removed", "already_gone", "failed"]
+    detail: str | None = None

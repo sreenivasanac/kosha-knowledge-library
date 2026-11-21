@@ -23,6 +23,14 @@ API_PREFIX = "/api"
 CORS_ORIGINS = ["http://localhost:5173"]
 SESSION_COOKIE = "kosha_session"
 SESSION_MAX_AGE_S = 60 * 60 * 24 * 30
+MAX_BODY_BYTES = 20 * 1024 * 1024  # larger requests are refused with 413
+# Cookie-authenticated requests that change something must carry this header
+# (a cross-site form cannot set it). Bearer-token requests are exempt.
+CSRF_HEADER = "X-Requested-With"
+CSRF_HEADER_VALUE = "kosha"
+LOGIN_MAX_FAILURES = 5  # failed logins per client address ...
+LOGIN_WINDOW_S = 60  # ... within this many seconds, then 429
+WEB_DIST_DIR = REPO_ROOT / "web" / "dist"  # the built web app, served at / when present
 
 # --- Lists ------------------------------------------------------------------
 PAGE_SIZES = (25, 50, 100)
@@ -35,12 +43,21 @@ EMBEDDING_DIM = 1024
 # --- Media ------------------------------------------------------------------
 MEDIA_CONCURRENCY = 4
 MEDIA_TIMEOUT_S = 60
+# Downloads go only to these hosts (or their subdomains), over https, and a
+# redirect is followed only to another of them.
+MEDIA_ALLOWED_HOSTS = ("pbs.twimg.com", "video.twimg.com", "abs.twimg.com", "media.licdn.com",
+                       "static.licdn.com", "i.ytimg.com")
+MEDIA_MAX_REDIRECTS = 5
+MEDIA_MAX_BYTES_IMAGE = 25 * 1024 * 1024
+MEDIA_MAX_BYTES_VIDEO = 500 * 1024 * 1024
 
 # --- Official X API ---------------------------------------------------------
 X_API_BASE = "https://api.x.com/2"
 X_API_COST_PER_BOOKMARK_USD = 0.001
 X_API_PAGE_SIZE = 100
 X_API_STALE_PAGES = 3  # stop after this many pages that add nothing new
+X_SYNC_INTERVAL_S = 24 * 60 * 60  # the in-process scheduler syncs this often ...
+X_SYNC_CHECK_S = 15 * 60  # ... and looks whether it is time this often
 
 # --- User settings (stored per user in `settings`; these are the defaults) --
 DEFAULT_SETTINGS: dict = {
@@ -62,11 +79,15 @@ class Settings(BaseSettings):
     kosha_admin_password: str = ""
     kosha_api_token: str = ""
     kosha_media_dir: Path = REPO_ROOT / "data" / "media"
-    # Send the session cookie over HTTPS only; turn on behind the reverse proxy.
-    kosha_cookie_secure: bool = False
+    # Send the session cookie over HTTPS only. Set KOSHA_COOKIE_SECURE=false for plain-http local use.
+    kosha_cookie_secure: bool = True
+    # Local development: the API docs and schema are served without signing in.
+    kosha_dev: bool = False
     # Official X API (optional; the daily sync does nothing without them).
     kosha_x_access_token: str = ""
     kosha_x_user_id: str = ""
+    # Voyage embeddings (semantic search). Without it search is keyword-only.
+    voyage_api_key: str = ""
 
 
 @lru_cache

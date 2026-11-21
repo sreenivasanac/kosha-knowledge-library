@@ -10,7 +10,6 @@ from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import (
     BigInteger,
     Boolean,
-    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -97,18 +96,6 @@ class Keybinding(Base):
 # --- Items ------------------------------------------------------------------
 items_seq = Sequence("items_seq")
 
-# Weighted full-text vector, kept by Postgres itself. Weights follow
-# SEARCH_DESIGN.md B.6 as far as one row can supply them (quoted text, link
-# titles and extracts live in other tables; the search work adds those).
-ITEMS_TSV_SQL = """
-setweight(to_tsvector('simple', coalesce(title, '')), 'A') ||
-setweight(to_tsvector('simple', coalesce(author_name, '') || ' ' || coalesce(author_handle, '')), 'A') ||
-setweight(to_tsvector(CASE WHEN lang = 'en' THEN 'english'::regconfig ELSE 'simple'::regconfig END,
-                      coalesce(body, '')), 'B') ||
-setweight(to_tsvector('simple', coalesce(summary, '')), 'D')
-"""
-
-
 class Item(Base):
     __tablename__ = "items"
     id: Mapped[int] = _pk()
@@ -151,13 +138,20 @@ class Item(Base):
     # Original payloads, one key per capture format ("graphql", "api", ...).
     # Deferred: large, and list queries never need it.
     raw: Mapped[dict | None] = mapped_column(JSONB, deferred=True)
-    tsv: Mapped[str | None] = mapped_column(TSVECTOR, Computed(ITEMS_TSV_SQL, persisted=True))
+    # Search columns, written by `kosha.search.index.reindex` (they draw on
+    # quoted posts, links and media extracts, so Postgres cannot generate them).
+    # Weights: tsv = A title+author, B body, C quoted text+links, D summary;
+    # tsv_extra = A note, B transcripts, C image descriptions and alt text.
+    search_text: Mapped[str | None] = mapped_column(Text)
+    tsv: Mapped[str | None] = mapped_column(TSVECTOR)
+    tsv_extra: Mapped[str | None] = mapped_column(TSVECTOR)
 
     __table_args__ = (
         UniqueConstraint("user_id", "source", "source_id"),
         Index("ix_items_tsv", "tsv", postgresql_using="gin"),
-        Index("ix_items_body_trgm", "body", postgresql_using="gin", postgresql_ops={"body": "gin_trgm_ops"}),
-        Index("ix_items_title_trgm", "title", postgresql_using="gin", postgresql_ops={"title": "gin_trgm_ops"}),
+        Index("ix_items_tsv_extra", "tsv_extra", postgresql_using="gin"),
+        Index("ix_items_search_text_trgm", "search_text", postgresql_using="gin",
+              postgresql_ops={"search_text": "gin_trgm_ops"}),
         Index("ix_items_order", "user_id", text("saved_order DESC NULLS FIRST"), text("seq DESC")),
     )
 
@@ -307,6 +301,8 @@ class ResultSet(Base):
     name: Mapped[str] = mapped_column(Text)
     query: Mapped[str | None] = mapped_column(Text)
     item_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), server_default=text("'{}'"))
+    # Ranking score per id, same order; NULL for sets that carry no ranking.
+    scores: Mapped[list[float] | None] = mapped_column(ARRAY(Float))
     created_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
     expires_at: Mapped[datetime | None] = mapped_column(TZ)
 
@@ -390,6 +386,18 @@ class SavedView(Base):
     query: Mapped[str] = mapped_column(Text, server_default="")
     params: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
+
+
+class SearchHistory(Base):
+    """Recent searches for the empty search bar; one row per distinct query."""
+
+    __tablename__ = "search_history"
+    id: Mapped[int] = _pk()
+    user_id: Mapped[int] = _user()
+    query: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TZ, server_default=NOW)
+
+    __table_args__ = (UniqueConstraint("user_id", "query"),)
 
 
 # --- Sync and capture -------------------------------------------------------

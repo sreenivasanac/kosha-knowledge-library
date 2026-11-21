@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from kosha.models import (
@@ -27,6 +28,7 @@ from kosha.models import (
 )
 from kosha.parsers import ParsedItem, ParseResult, UnknownCapture, parse_capture
 from kosha.parsers.common import order_content_types
+from kosha.search.index import reindex
 
 LONGER_WINS = ("title", "body")
 
@@ -189,6 +191,7 @@ def upsert_result(session: Session, user_id: int, result: ParseResult) -> Counts
                 else:
                     counts.unchanged += 1
     _resolve_relations(session, touched)
+    reindex(session, touched)
     return counts
 
 
@@ -216,7 +219,10 @@ def ingest_envelope(session: Session, user_id: int, envelope: dict) -> Capture:
         result = parse_capture(envelope["source"], envelope["kind"], envelope.get("payload"), envelope.get("meta"))
         with session.begin_nested():
             counts = upsert_result(session, user_id, result)
-    except UnknownCapture:
+    except (UnknownCapture, OperationalError, IntegrityError):
+        # A lost connection, a deadlock or two captures racing on the same row
+        # is not the payload's fault: the caller retries. (A value Postgres
+        # rejects outright is a DataError and stays a parse error.)
         raise
     except Exception as exc:
         capture.parse_error = f"{type(exc).__name__}: {exc}"[:2000]

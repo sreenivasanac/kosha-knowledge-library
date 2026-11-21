@@ -1,18 +1,21 @@
 """Items: list, detail, state changes (single and bulk, with undo), hard delete."""
 import math
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from kosha.api.tags import attach_tag, detach_tag, get_item
 from kosha.auth import current_user
-from kosha.config import DEFAULT_PAGE_SIZE, PAGE_SIZES
+from kosha.config import DEFAULT_PAGE_SIZE, PAGE_SIZES, get_settings
 from kosha.db import get_session
 from kosha.items_query import ItemFilters, conditions, fetch_page
+from kosha.search.embeddings import EmbeddingError
+from kosha.search.engine import MODES, search
+from kosha.search.index import reindex
+from kosha.search.query import QueryError
 from kosha.models import DeletedItem, Item, ItemMedia, ItemRelation, ItemTag, Tag, UndoBatch, User
 from kosha.schemas import BulkIn, BulkOut, ItemDetailOut, ItemOut, ItemPage, ItemPatch
 from kosha.serialize import serialize_items, thread_items
@@ -30,6 +33,7 @@ def apply_patch(item: Item, patch: ItemPatch, now: datetime) -> None:
         item.starred = patch.starred
     if "note" in fields:
         item.note = patch.note or None
+        reindex(object_session(item), [item.id])  # the note is searchable
     if "read" in fields and patch.read is not None:
         item.read_at = (item.read_at or now) if patch.read else None
     if "archived" in fields and patch.archived is not None:
@@ -39,19 +43,49 @@ def apply_patch(item: Item, patch: ItemPatch, now: datetime) -> None:
 @router.get("/items", response_model=ItemPage)
 def list_items(
     filters: Annotated[ItemFilters, Query()],
+    q: str | None = Query(None, description="Search in the qualifier language (SEARCH_DESIGN.md B)"),
+    mode: str | None = Query(None, description=f"One of {MODES}. Default: hybrid when q has words, else filter"),
+    sort: str | None = Query(None, description="A sort key, optionally with -asc or -desc; same as sort: in q"),
+    snapshot_id: int | None = Query(None, description="From the first page of a ranked search, to page through it"),
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, description=f"One of {PAGE_SIZES}"),
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """Numbered pages in a stable order (newest saved first). Saved, unarchived
-    items by default; `archived=true` lists the Archive."""
+    items by default; `archived=true` lists the Archive. With `q` the page is a
+    search result: rows carry `snippet` and `score`, and a ranked search
+    returns a `snapshot_id` that keeps its pages stable. A query that does not
+    parse is a 422 with `{detail: {message, position}}`."""
     if page_size not in PAGE_SIZES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"page_size must be one of {PAGE_SIZES}")
-    items, total = fetch_page(session, user.id, conditions(filters), page, page_size)
+    if mode is not None and mode not in MODES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"mode must be one of {MODES}")
+    if q is None and sort is None:
+        items, total = fetch_page(session, user.id, conditions(filters), page, page_size)
+        return {
+            "items": serialize_items(session, user.id, items), "page": page, "page_size": page_size,
+            "total": total, "pages": math.ceil(total / page_size),
+        }
+    # With a query, saved/archived scope comes from the query (`is:archived`,
+    # `include:`); the other list filters still apply when they were sent.
+    sent = filters.model_copy(update={k: None for k in ("is_saved", "archived") if k not in filters.model_fields_set})
+    try:
+        found = search(session, user.id, q or "", mode=mode, sort=sort, page=page, page_size=page_size,
+                       snapshot_id=snapshot_id, extra_where=conditions(sent),
+                       extra_key=sent.model_dump_json(exclude_none=True))
+    except QueryError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.as_dict()) from None
+    except EmbeddingError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"Semantic search is unavailable: {exc}") from None
+    session.commit()  # the snapshot, the recent search and any ledger row
+    rows = serialize_items(session, user.id, found["items"])
+    for row in rows:
+        row["snippet"], row["score"] = found["snippets"].get(row["id"]), found["scores"].get(row["id"])
     return {
-        "items": serialize_items(session, user.id, items), "page": page, "page_size": page_size,
-        "total": total, "pages": math.ceil(total / page_size),
+        "items": rows, "page": page, "page_size": page_size, "total": found["total"],
+        "pages": math.ceil(found["total"] / page_size),
+        **{k: found[k] for k in ("mode", "query", "snapshot_id", "refreshed", "notice", "took_ms")},
     }
 
 
@@ -123,19 +157,29 @@ def undo(batch_id: int, user: User = Depends(current_user), session: Session = D
             read_at=datetime.fromisoformat(row["read_at"]) if row["read_at"] else None,
             archived_at=datetime.fromisoformat(row["archived_at"]) if row["archived_at"] else None,
         ))
+    reindex(session, ids)  # notes are searchable
     if before["tag_ids"]:
         session.execute(delete(ItemTag).where(ItemTag.item_id.in_(ids), ItemTag.tag_id.in_(before["tag_ids"])))
+        # Tags and items may have been deleted since; their rows are not restored.
+        tag_ids = [row["tag_id"] for row in before["item_tags"]]
+        live_tags = set(session.scalars(select(Tag.id).where(Tag.user_id == user.id, Tag.id.in_(tag_ids))))
+        live_items = set(session.scalars(select(Item.id).where(Item.user_id == user.id, Item.id.in_(ids))))
         for row in before["item_tags"]:
+            if row["tag_id"] not in live_tags or row["item_id"] not in live_items:
+                continue
+            if row["role"] != "other" and not row["removed_by_user"]:
+                # Another tag may have taken the role since: it steps down.
+                session.execute(update(ItemTag).where(
+                    ItemTag.item_id == row["item_id"], ItemTag.namespace == row["namespace"],
+                    ItemTag.role == row["role"]).values(role="other"))
             session.add(ItemTag(**row))
     batch.undone_at = datetime.now(UTC)
     session.commit()
 
 
-@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def hard_delete(item_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+def delete_item(session: Session, user: User, item: Item) -> None:
     """Delete for good: the row, its stored files, and a `deleted_items` record
-    so a later sync does not bring the item back."""
-    item = get_item(session, user, item_id)
+    so a later sync does not bring the item back. Commits."""
     files = [p for m in session.scalars(select(ItemMedia).where(ItemMedia.item_id == item.id))
              for p in (m.local_path, m.local_preview_path) if p]
     if session.scalar(select(DeletedItem.id).where(
@@ -146,5 +190,13 @@ def hard_delete(item_id: int, user: User = Depends(current_user), session: Sessi
     session.execute(update(ItemRelation).where(ItemRelation.to_item_id == item.id).values(to_item_id=None, target_state="missing"))
     session.delete(item)
     session.commit()
+    root = get_settings().kosha_media_dir.resolve()
     for path in files:  # after the commit, so a failed delete never orphans rows
-        Path(path).unlink(missing_ok=True)
+        target = (root / path).resolve()  # paths are stored relative to the media folder
+        if target.is_relative_to(root):
+            target.unlink(missing_ok=True)
+
+
+@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def hard_delete(item_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    delete_item(session, user, get_item(session, user, item_id))

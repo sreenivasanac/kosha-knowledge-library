@@ -1,6 +1,7 @@
 """`POST /api/captures`: the one way browser captures enter Kosha
 (docs/CAPTURE_CONTRACT.md)."""
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from kosha.auth import current_user
@@ -17,9 +18,14 @@ router = APIRouter(tags=["captures"])
 def post_capture(body: CaptureIn, user: User = Depends(current_user), session: Session = Depends(get_session)):
     try:
         capture = ingest_envelope(session, user.id, body.model_dump())
+        session.commit()  # the envelope is kept even when parsing failed
     except UnknownCapture as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from None
-    session.commit()  # the envelope is kept even when parsing failed
+    except DBAPIError:
+        # 503 tells the extension to send the batch again; 422 is for payloads
+        # that cannot be parsed.
+        session.rollback()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Database busy; send the capture again") from None
     if capture.parse_error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             f"Capture {capture.id} stored but not parsed: {capture.parse_error}")

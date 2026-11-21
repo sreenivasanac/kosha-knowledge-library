@@ -19,6 +19,13 @@ router = APIRouter(tags=["library"])
 LISTED = (Item.is_saved, Item.archived_at.is_(None))
 
 
+@router.get("/health")
+def health():
+    """2xx when the bearer token or session is valid (the router requires
+    one), 401 otherwise. The extension uses it to test its connection."""
+    return {"status": "ok"}
+
+
 @router.get("/collections", response_model=list[CollectionOut])
 def collections(user: User = Depends(current_user), session: Session = Depends(get_session)):
     """Source folders (X bookmark folders, ...) with item counts."""

@@ -5,6 +5,7 @@ Resumable by construction: a row is done when its path column is set, files
 are written to `<name>.part` and renamed, so an interrupted run just continues.
 """
 import re
+from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -15,7 +16,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from kosha.auth import current_user
-from kosha.config import MEDIA_CONCURRENCY, MEDIA_TIMEOUT_S, get_settings
+from kosha.config import (
+    MEDIA_ALLOWED_HOSTS,
+    MEDIA_CONCURRENCY,
+    MEDIA_MAX_BYTES_IMAGE,
+    MEDIA_MAX_BYTES_VIDEO,
+    MEDIA_MAX_REDIRECTS,
+    MEDIA_TIMEOUT_S,
+    get_settings,
+)
 from kosha.db import get_session
 from kosha.models import Item, ItemMedia, User
 from kosha.prefs import load_settings
@@ -39,16 +48,40 @@ def file_extension(url: str) -> str:
     return "." + (match.group(1) or match.group(2)).lower() if match else ".bin"
 
 
-def _download(client: httpx.Client, url: str, dest: Path) -> int:
+def allowed_url(url: str) -> bool:
+    """https, and a known media host or one of its subdomains."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme == "https" and any(host == h or host.endswith("." + h) for h in MEDIA_ALLOWED_HOSTS)
+
+
+def _download(client: httpx.Client, url: str, dest: Path, max_bytes: int) -> int:
+    """Fetch one file. Redirects are followed by hand so every hop is checked
+    against the allow-list, and the download stops at `max_bytes`."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
-    with client.stream("GET", url, follow_redirects=True) as response:
-        response.raise_for_status()
-        with part.open("wb") as fh:
-            for chunk in response.iter_bytes():
-                fh.write(chunk)
-    part.replace(dest)
-    return dest.stat().st_size
+    for _ in range(MEDIA_MAX_REDIRECTS + 1):
+        if not allowed_url(url):
+            raise OSError(f"Not an allowed media address: {urlparse(url).hostname}")
+        with client.stream("GET", url, follow_redirects=False) as response:
+            if response.is_redirect:
+                url = urljoin(url, response.headers.get("location", ""))
+                continue
+            response.raise_for_status()
+            size = 0
+            try:
+                with part.open("wb") as fh:
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise OSError(f"Larger than {max_bytes} bytes")
+                        fh.write(chunk)
+            except OSError:
+                part.unlink(missing_ok=True)
+                raise
+        part.replace(dest)
+        return size
+    raise OSError("Too many redirects")
 
 
 def fetch_media(session: Session, user_id: int, limit: int | None = None, client: httpx.Client | None = None) -> dict:
@@ -63,14 +96,16 @@ def fetch_media(session: Session, user_id: int, limit: int | None = None, client
             | (ItemMedia.local_preview_path.is_(None) & ItemMedia.preview_url.is_not(None)),
         ).order_by(ItemMedia.id)
     ).all()
-    jobs = []  # (media row, column to set, url, relative path)
+    jobs = []  # (media row, column to set, url, relative path, size cap)
+    cap = lambda m: MEDIA_MAX_BYTES_VIDEO if m.type in ("video", "audio") else MEDIA_MAX_BYTES_IMAGE  # noqa: E731
     for m in rows:
         if m.local_path is None and m.original_url and settings.get(STORE_SETTING.get(m.type, "store_images")):
             url = twitter_original(m.original_url) if m.type == "photo" else m.original_url
-            jobs.append((m, "local_path", url, f"{m.item_id}/{m.id}{file_extension(url)}"))
+            jobs.append((m, "local_path", url, f"{m.item_id}/{m.id}{file_extension(url)}", cap(m)))
         if m.local_preview_path is None and m.preview_url:
-            jobs.append((m, "local_preview_path", m.preview_url, f"{m.item_id}/{m.id}-preview{file_extension(m.preview_url)}"))
-    jobs = [j for j in jobs if j[2].startswith("https://")][:limit]
+            jobs.append((m, "local_preview_path", m.preview_url,
+                         f"{m.item_id}/{m.id}-preview{file_extension(m.preview_url)}", MEDIA_MAX_BYTES_IMAGE))
+    jobs = [j for j in jobs if allowed_url(j[2])][:limit]
 
     counts = {"downloaded": 0, "failed": 0, "bytes": 0}
     own_client = client is None
@@ -79,7 +114,8 @@ def fetch_media(session: Session, user_id: int, limit: int | None = None, client
     # add a failure counter column if those pile up.
     try:
         with ThreadPoolExecutor(MEDIA_CONCURRENCY) as pool:
-            futures = {pool.submit(_download, client, url, root / rel): (m, column, rel) for m, column, url, rel in jobs}
+            futures = {pool.submit(_download, client, url, root / rel, max_bytes): (m, column, rel)
+                       for m, column, url, rel, max_bytes in jobs}
             for done, future in enumerate(as_completed(futures), 1):
                 m, column, rel = futures[future]
                 try:

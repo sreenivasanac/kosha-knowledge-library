@@ -65,7 +65,9 @@ export async function unsavePost(doc: Document, urn: string, deps: UnsaveDeps, l
   // No saved post recognised at all means the selectors are out of date, not that the post is gone.
   if (found === 'none') return { status: 'failed', detail: 'no saved posts recognised on the page; selectors may be out of date', abort: true };
   if (found === 'limit') return { status: 'failed', detail: 'post not found within the scroll limit' };
-  if (found === 'end') return { status: 'already_gone', detail: 'not in the saved posts list' };
+  // Reaching the end of what loaded is not proof the post is unsaved (slow or background loads), so
+  // report a failure and let it be retried rather than have Kosha delete its copy.
+  if (found === 'end') return { status: 'failed', detail: 'not found in the saved posts that loaded' };
   const card = found;
 
   const trigger = first(card, SELECTORS.overflowButton);

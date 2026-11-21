@@ -363,7 +363,9 @@ def parse_timeline(payload: Any, meta: dict | None, in_folder: bool) -> ParseRes
             item.is_saved = True
         if folder_id:
             item.collections.append({"source_id": folder_id, "position": sort_index})
-        elif sort_index is not None:
+        elif not in_folder and sort_index is not None:
+            # (a folder page that arrived without its folder id still orders
+            # the folder, so it must not overwrite the main list's order)
             item.saved_order = sort_index
             item.saved_at_est = estimate_saved_at(sort_index, item.fields.get("posted_at"))
     result.items = list(out.values())

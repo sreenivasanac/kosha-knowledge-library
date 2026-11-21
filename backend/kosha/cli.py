@@ -25,6 +25,9 @@ def serve(host: str = SERVER_HOST, port: int = SERVER_PORT, reload: bool = False
     """Run the API server."""
     import uvicorn
 
+    from kosha.sync.scheduler import start_scheduler
+
+    start_scheduler()
     uvicorn.run("kosha.app:app", host=host, port=port, reload=reload)
 
 
@@ -83,3 +86,70 @@ def media_fetch(limit: int = typer.Option(None, help="Stop after this many files
     with SessionLocal() as session:
         counts = fetch_media(session, _admin(session).id, limit=limit)
     typer.echo(" ".join(f"{k}={v}" for k, v in counts.items()))
+
+
+@app.command("reindex")
+def reindex_cmd():
+    """Rewrite the search columns (search text and text-search vectors) of every item."""
+    from kosha.db import SessionLocal
+    from kosha.search.index import reindex
+
+    with SessionLocal() as session:
+        rows = reindex(session)
+        session.commit()
+    typer.echo(f"reindexed={rows}")
+
+
+@app.command()
+def summarize():
+    """Write rule-built summaries for items that lack one or whose text changed."""
+    from kosha.db import SessionLocal
+    from kosha.summaries import summarize as run
+
+    with SessionLocal() as session:
+        counts = run(session, _admin(session).id)
+    typer.echo(" ".join(f"{k}={v}" for k, v in counts.items()))
+
+
+@app.command()
+def embed(limit: int = typer.Option(None, help="Stop after this many items")):
+    """Embed saved items whose text is new or changed (Voyage; resumable)."""
+    from kosha.db import SessionLocal
+    from kosha.search.embeddings import embed_items
+
+    with SessionLocal() as session:
+        totals = embed_items(session, _admin(session).id, limit=limit, echo=typer.echo)
+    typer.echo(" ".join(f"{k}={round(v, 4) if isinstance(v, float) else v}" for k, v in totals.items()))
+
+
+@app.command("sync-x")
+def sync_x():
+    """Run the official X API bookmark sync once (does nothing unless the
+    `x_api_sync_enabled` setting is on and the X token is configured)."""
+    from kosha.db import SessionLocal
+    from kosha.sync.x_api import sync_bookmarks
+
+    with SessionLocal() as session:
+        summary = sync_bookmarks(session, _admin(session).id)
+    typer.echo(" ".join(f"{k}={v}" for k, v in summary.items()))
+
+
+@app.command()
+def reparse():
+    """Parse again every stored capture whose parsing failed (after a parser fix)."""
+    from kosha.db import SessionLocal
+    from kosha.ingest import ingest_envelope
+    from kosha.models import Capture
+
+    fixed = failed = 0
+    with SessionLocal() as session:
+        for capture in session.scalars(select(Capture).where(Capture.parse_error.is_not(None)).order_by(Capture.id)).all():
+            envelope = {"source": capture.source, "kind": capture.kind, "meta": capture.meta, "payload": capture.payload}
+            ingest_envelope(session, capture.user_id, envelope)  # finds the same row by its payload hash
+            session.commit()
+            if capture.parse_error:
+                failed += 1
+                typer.echo(f"FAILED capture {capture.id}: {capture.parse_error[:200]}", err=True)
+            else:
+                fixed += 1
+    typer.echo(f"fixed={fixed} failed={failed}")

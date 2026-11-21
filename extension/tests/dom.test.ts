@@ -135,8 +135,8 @@ describe('LinkedIn unsave (synthetic fixture)', () => {
     expect(opened).toBe(false);
   });
 
-  it('reports already gone when the list ends without the post, or the menu offers Save', async () => {
-    expect(await unsavePost(document, 'urn:li:activity:1', deps)).toMatchObject({ status: 'already_gone' });
+  it('fails when the list ends without the post; already gone only when the menu offers Save', async () => {
+    expect(await unsavePost(document, 'urn:li:activity:1', deps)).toMatchObject({ status: 'failed' });
     wireMenu(URN2, ['Save']);
     expect(await unsavePost(document, URN2, deps)).toMatchObject({ status: 'already_gone' });
   });

@@ -11,12 +11,14 @@ from sqlalchemy.orm import Session
 
 from kosha.models import Item, ItemCollection, ItemTag, Tag
 
-# Newest saved first. Items the source gave no order for (official-API and
-# LinkedIn captures) come first, newest ingested on top: in practice they are
-# the daily sync's new bookmarks, and they take their real place once the
-# extension captures them with a `saved_order`. Neither column changes with
-# user actions, so page N stays page N.
-STABLE_ORDER = (Item.saved_order.desc().nulls_first(), Item.seq.desc())
+# Newest saved first, by the save time as well as it is known. Items the source
+# gave no order for (official-API and LinkedIn captures) take the time Kosha
+# first stored them, so they sit among the rest rather than all on top. For X
+# the estimate is decoded from `saved_order`, so both agree. None of these
+# columns changes with user actions, so page N stays page N.
+SAVED_KEY = func.coalesce(Item.saved_at, Item.saved_at_est, Item.captured_at)
+STABLE_ORDER = (SAVED_KEY.desc(), Item.saved_order.desc().nulls_last(), Item.seq.desc())
+STABLE_ORDER_ASC = (SAVED_KEY.asc(), Item.saved_order.asc().nulls_first(), Item.seq.asc())
 
 # The year an item belongs to in the sidebar: when it was saved, as well as known.
 ITEM_YEAR = extract("year", func.coalesce(Item.saved_at, Item.saved_at_est, Item.posted_at))
@@ -73,11 +75,12 @@ def conditions(f: ItemFilters) -> list[ColumnElement[bool]]:
     return where
 
 
-def fetch_page(session: Session, user_id: int, where: list[ColumnElement[bool]], page: int, page_size: int) -> tuple[list[Item], int]:
-    """One numbered page in the stable order, plus the total count."""
+def fetch_page(session: Session, user_id: int, where: list[ColumnElement[bool]], page: int, page_size: int,
+               order=STABLE_ORDER) -> tuple[list[Item], int]:
+    """One numbered page in the stable order (or the given one), plus the total count."""
     scope = [Item.user_id == user_id, *where]
     total = session.scalar(select(func.count()).select_from(Item).where(*scope)) or 0
     items = session.scalars(
-        select(Item).where(*scope).order_by(*STABLE_ORDER).limit(page_size).offset((page - 1) * page_size)
+        select(Item).where(*scope).order_by(*order).limit(page_size).offset((page - 1) * page_size)
     ).all()
     return list(items), total
