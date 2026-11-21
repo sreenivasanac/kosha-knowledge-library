@@ -1,0 +1,16 @@
+[Unit]
+Description=Kosha knowledge library
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=agent
+WorkingDirectory=/home/agent/apps/kosha/backend
+EnvironmentFile=/home/agent/apps/kosha/.env
+ExecStart=/home/agent/.local/bin/uv run --no-sync kosha serve --port 8050
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
