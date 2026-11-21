@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { undo } from './actions';
 import { api, invalidateLibrary, useCapabilities, useLists, type Media } from './api';
-import { JEV_DEFAULT_THRESHOLD } from './constants';
+import { JEV_DEFAULT_THRESHOLD, JEV_EXAMPLE_QUESTION } from './constants';
 import { usd } from './format';
 import { ACTIONS, type Area } from './keymap';
 import { currentSearch, pathname, setSearch, withDefaults } from './nav';
@@ -125,8 +125,14 @@ function Lists({ ids }: { ids: number[] }) {
               value={text}
               onChange={(e) => (setText(e.target.value), setActive(0))}
               onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') (e.preventDefault(), setActive((at + 1) % Math.max(rows.length, 1)));
-                else if (e.key === 'ArrowUp') (e.preventDefault(), setActive((at - 1 + rows.length) % Math.max(rows.length, 1)));
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setActive((at + 1) % Math.max(rows.length, 1));
+                }
+                else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setActive((at - 1 + rows.length) % Math.max(rows.length, 1));
+                }
                 else if (e.key === 'Enter') void add(rows[at]);
               }}
               className="field w-full"
@@ -196,11 +202,14 @@ function Jev({ question: initial = '' }: { question?: string }) {
           }
         >
           {!caps.jev && <Unavailable what="Jev check" />}
-          <p className="text-sm text-ink-2">Asks a yes/no question of each item’s summary in {s.q ? <code className="rounded bg-sunken px-1">{s.q}</code> : 'the whole library'} and keeps the ones that pass.</p>
+          <p className="text-sm text-ink-2">Asks a yes/no question of each item in {s.q ? <code className="rounded bg-sunken px-1">{s.q}</code> : 'the whole library'} and keeps the ones that pass.</p>
           <label className="block text-sm font-medium">
             Question
-            <input data-autofocus className="field mt-1 w-full" placeholder="Is this about retrieval-augmented generation?" value={question} onChange={(e) => (setQuestion(e.target.value), setEstimate(null))} />
+            <input data-autofocus className="field mt-1 w-full" placeholder={JEV_EXAMPLE_QUESTION} value={question} onChange={(e) => (setQuestion(e.target.value), setEstimate(null))} aria-describedby="jev-hint" />
           </label>
+          <p id="jev-hint" className="text-sm text-ink-3">
+            Jev reads literally. Write a full sentence that says what counts, for example “{JEV_EXAMPLE_QUESTION}” A fragment such as “about RAG?” leaves most items undecided.
+          </p>
           <label className="block text-sm font-medium">
             Keep items scoring at least {threshold.toFixed(2)}
             <input type="range" min={0.05} max={0.95} step={0.05} value={threshold} onChange={(e) => (setThreshold(Number(e.target.value)), setEstimate(null))} className="mt-1 block w-full accent-(--accent)" />
@@ -210,7 +219,7 @@ function Jev({ question: initial = '' }: { question?: string }) {
               {estimate.n.toLocaleString()} item{estimate.n === 1 ? '' : 's'} to check, estimated <strong>{usd(estimate.estimate_usd)}</strong>. Answers already cached cost nothing.
             </p>
           )}
-          {!!error && <ErrorNote error={error} />}
+          {!!error && <ErrorNote error={error} what="Jev check" />}
         </Frame>
       </form>
     </Modal>
@@ -257,7 +266,7 @@ function MediaText({ ids }: { ids: number[] | 'all' }) {
         ) : estimate.isPending ? (
           <div className="skeleton h-16" aria-busy="true" />
         ) : estimate.error ? (
-          <ErrorNote error={estimate.error} retry={() => void estimate.refetch()} />
+          <ErrorNote error={estimate.error} retry={() => void estimate.refetch()} what="Media text" />
         ) : (
           <dl className="grid grid-cols-3 gap-2 text-center">
             {[
@@ -322,6 +331,43 @@ function SaveView({ name: initial = '' }: { name?: string }) {
   );
 }
 
+function RenameList({ id, name: initial }: { id: number; name: string }) {
+  const [name, setName] = useState(initial);
+  return (
+    <Modal label="Rename list" className="w-[min(30rem,calc(100vw-1.5rem))]">
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            await api(`/api/lists/${id}`, { method: 'PATCH', body: { name: name.trim() } });
+            toast(`Renamed the list to ${name.trim()}`);
+            invalidateLibrary();
+            closeOverlay();
+          } catch (error) {
+            toastError(error);
+          }
+        }}
+      >
+        <Frame
+          title={`Rename the list ${initial}`}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={closeOverlay}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" disabled={!name.trim() || name.trim() === initial}>
+                Rename
+              </button>
+            </>
+          }
+        >
+          <input data-autofocus aria-label="List name" className="field w-full" value={name} onChange={(e) => setName(e.target.value)} />
+        </Frame>
+      </form>
+    </Modal>
+  );
+}
+
 function Lightbox({ media, index }: { media: Media[]; index: number }) {
   const [at, setAt] = useState(index);
   const step = (d: number) => setAt((at + d + media.length) % media.length);
@@ -375,6 +421,8 @@ export function Overlays() {
       return <MediaText ids={o.ids} />;
     case 'saveView':
       return <SaveView name={o.name} />;
+    case 'renameList':
+      return <RenameList id={o.id} name={o.name} />;
     case 'lightbox':
       return <Lightbox media={o.media} index={o.index} />;
     case 'confirm':

@@ -10,17 +10,20 @@ import { setSearch } from './nav';
 import { getState, openOverlay, toastError, useStore } from './store';
 import { ErrorNote, useHint } from './ui';
 
+/** The last `n` press the note field answered (see `noteFocus` in the store). */
+let noteFocusHandled = 0;
+
 function NoteEditor({ item }: { item: Item }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState(item.note ?? '');
   const noteFocus = useStore((s) => s.noteFocus);
   const hint = useHint();
-  // A different item, or the note changed elsewhere (undo): show the stored note.
-  useEffect(() => setText(item.note ?? ''), [item.id, item.note]);
-  // `n` asks for the caret here.
+  // `n` asks for the caret here, once per press: moving on to another item must not pull the caret back in.
   useEffect(() => {
-    if (noteFocus) ref.current?.focus();
-  }, [noteFocus, item.id]);
+    if (noteFocus === noteFocusHandled) return;
+    noteFocusHandled = noteFocus;
+    ref.current?.focus();
+  }, [noteFocus]);
 
   async function save() {
     if (text.trim() === (item.note ?? '')) return;
@@ -58,10 +61,14 @@ export function Drawer({ id, onClose }: { id: number; onClose: () => void }) {
   const query = useQuery({ queryKey: ['item', id], queryFn: () => api<Item>(`/api/items/${id}`), placeholderData: () => getState().pageItems.get(id) });
   const item = query.data;
   const thread = (item?.thread_items ?? []).length > 1 ? item!.thread_items! : null;
+  // A reply whose parent is held (and is not already part of a shown thread) is read under that parent.
+  const parentId = !thread ? (item?.reply_to?.item_id ?? null) : null;
+  const parent = useQuery({ queryKey: ['item', parentId], queryFn: () => api<Item>(`/api/items/${parentId}`), enabled: parentId != null }).data;
+  const conversation = thread ?? (parent && item ? [parent, item] : null);
   const iconButton = 'grid h-8 w-8 place-items-center rounded-md text-ink-2 hover:bg-sunken hover:text-ink';
 
   return (
-    <aside data-drawer aria-label="Reader" className="fixed inset-y-0 right-0 z-30 flex w-full sm:w-[clamp(420px,calc(100vw-1000px),560px)] flex-col border-l border-line bg-surface shadow-pop">
+    <aside data-drawer aria-label="Reader" className="fixed inset-y-0 right-0 z-30 flex w-full sm:w-(--drawer-w) flex-col border-l border-line bg-surface shadow-pop">
       <div className="flex items-center gap-0.5 border-b border-line px-2 py-1.5">
         <button className={iconButton} onClick={onClose} title={hint('Close', 'escape')} aria-label="Close the reader">
           <X size={17} />
@@ -106,7 +113,7 @@ export function Drawer({ id, onClose }: { id: number; onClose: () => void }) {
           <ErrorNote error={query.error ?? 'This item could not be loaded.'} retry={() => void query.refetch()} />
         ) : (
           <>
-            {item.reply_to && (
+            {item.reply_to && !conversation?.some((t) => t.id === item.reply_to!.item_id) && (
               <p className="text-sm text-ink-2">
                 Replying to {item.reply_to.author_handle ? `@${item.reply_to.author_handle}` : 'a post'}.{' '}
                 {item.reply_to.item_id ? (
@@ -122,20 +129,31 @@ export function Drawer({ id, onClose }: { id: number; onClose: () => void }) {
                 ) : null}
               </p>
             )}
-            {thread ? (
-              <ol aria-label="Thread" className="space-y-5">
-                {thread.map((t, i) => (
+            {conversation ? (
+              <ol aria-label={thread ? 'Thread' : 'Conversation'} className="space-y-5">
+                {conversation.map((t, i) => (
                   <li key={t.id} className={`border-l-2 pl-4 ${t.id === item.id ? 'border-mark' : 'border-line'}`}>
-                    <p className="mb-1 text-xs text-ink-3">
-                      {i + 1} of {thread.length}
-                      {t.id === item.id && ' · the post you saved'}
+                    <p className="mb-1 flex items-center gap-2 text-xs text-ink-3">
+                      <span>
+                        {thread ? `${i + 1} of ${thread.length}` : i === 0 ? 'The post replied to' : 'The reply'}
+                        {t.id === item.id && ' · shown in this reader'}
+                      </span>
+                      {/* Keys act on the post the reader shows; this makes another post of the thread that one. */}
+                      {t.id !== item.id && (
+                        <button className="text-accent hover:underline" onClick={() => setSearch({ item: t.id })}>
+                          Open
+                        </button>
+                      )}
                     </p>
                     <ItemFull item={t} />
                   </li>
                 ))}
               </ol>
             ) : (
-              <ItemFull item={item} />
+              <>
+                <ItemFull item={item} />
+                {item.thread && !query.isPlaceholderData && <p className="text-sm text-ink-3">Only this post of its thread has been captured.</p>}
+              </>
             )}
             <div className="flex items-center gap-3">
               <SourceIcon source={item.source} />
@@ -154,7 +172,8 @@ export function Drawer({ id, onClose }: { id: number; onClose: () => void }) {
 
             <section>
               <Heading>Note</Heading>
-              <NoteEditor item={item} />
+              {/* Keyed: a different item, or a note changed elsewhere (undo), starts from the stored note. */}
+              <NoteEditor key={`${item.id}:${item.note ?? ''}`} item={item} />
             </section>
 
             {item.media.length > 0 && (

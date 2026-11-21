@@ -101,7 +101,7 @@ export function ArchiveTools() {
   }
 
   return (
-    <section aria-label="Remove from sources" className="mb-4 max-w-[680px] space-y-2 rounded-lg border border-line bg-surface p-4">
+    <section aria-label="Remove from sources" className="mx-auto mb-4 max-w-[680px] space-y-2 rounded-lg border border-line bg-surface p-4">
       <h2 className="font-semibold">Remove from sources</h2>
       <p className="text-sm text-ink-2">Un-bookmarks the archived items at X and LinkedIn through the browser extension, a few seconds apart. Kosha deletes its own copy only for items the extension confirms.</p>
       {!caps.removals && <Unavailable what="Removal at the source" />}

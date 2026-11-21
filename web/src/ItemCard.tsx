@@ -1,10 +1,10 @@
 /** One saved item as a list card, a grid card or a compact row, and the parts the reader drawer reuses. */
-import { Archive, ArchiveRestore, BookOpen, ExternalLink, Eye, FileText, Heart, MessageCircle, Play, Repeat2, Star, StickyNote, Tag, Trash2 } from 'lucide-react';
-import { useState, type MouseEvent, type ReactNode } from 'react';
+import { Archive, ArchiveRestore, BookOpen, Bot, ExternalLink, Eye, FileText, Heart, MessageCircle, Play, Repeat2, Star, StickyNote, Tag, Trash2 } from 'lucide-react';
+import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { focusItem, runAction } from './actions';
 import type { Author, Item, ItemTag, Link, Media } from './api';
 import { deleteForever } from './ArchiveTools';
-import { CLAMP_CHARS, CLAMP_LINES, type View } from './constants';
+import { CLAMP_CHARS, CLAMP_LINES, DOUBTFUL_BELOW, MEDIA_MAX_HEIGHT, type View } from './constants';
 import { count, displayUrl, duration, fullDate, shortDate } from './format';
 import { goQuery, setSearch } from './nav';
 import { quoteValue } from './query';
@@ -12,10 +12,12 @@ import { getState, openOverlay, setState, useStore } from './store';
 import { useHint } from './ui';
 
 const SOURCE_GLYPH: Record<string, string> = { x: '𝕏', linkedin: 'in', youtube: 'YT', chrome: 'Ch', instagram: 'IG', gmail: 'M', web: 'W' };
+const SOURCE_NAME: Record<string, string> = { x: 'X', linkedin: 'LinkedIn', youtube: 'YouTube', web: 'the web' };
+export const sourceName = (source: string) => SOURCE_NAME[source] ?? source;
 
 export function SourceIcon({ source }: { source: string }) {
   return (
-    <span title={`From ${source}`} aria-label={`From ${source}`} className="inline-grid h-4 min-w-4 place-items-center rounded-sm bg-sunken px-0.5 text-[10px] font-semibold leading-none text-ink-2">
+    <span title={`From ${sourceName(source)}`} aria-label={`From ${sourceName(source)}`} className={`inline-grid h-4 min-w-4 place-items-center rounded-sm px-0.5 text-[10px] font-semibold leading-none ${source === 'linkedin' ? 'bg-accent text-surface' : 'bg-sunken text-ink-2'}`}>
       {SOURCE_GLYPH[source] ?? source.slice(0, 2)}
     </span>
   );
@@ -71,12 +73,18 @@ export function RichText({ item }: { item: Item }) {
 
 function Body({ item, clamp, className = '' }: { item: Item; clamp: number | null; className?: string }) {
   const [open, setOpen] = useState(false);
+  const [long, setLong] = useState(false);
+  const text = useRef<HTMLDivElement>(null);
   const body = item.body ?? '';
+  // Measured, not guessed from the character count: short lines and wide ones clamp alike.
+  useLayoutEffect(() => {
+    const el = text.current;
+    if (el && clamp != null && !open) setLong(el.scrollHeight > el.clientHeight + 1);
+  }, [body, clamp, open]);
   if (!body) return null;
-  const long = clamp != null && (body.length > CLAMP_CHARS || body.split('\n').length > clamp);
   return (
     <div className={className}>
-      <div className="whitespace-pre-wrap break-words leading-relaxed" style={long && !open ? { display: '-webkit-box', WebkitLineClamp: clamp, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : undefined}>
+      <div ref={text} className="whitespace-pre-wrap break-words leading-normal" style={clamp != null && !open ? { display: '-webkit-box', WebkitLineClamp: clamp, WebkitBoxOrient: 'vertical', overflow: 'hidden' } : undefined}>
         <RichText item={item} />
       </div>
       {long && (
@@ -97,8 +105,27 @@ export function bestVideoSrc(m: Media): string {
 
 const ratio = (m: Media, min: number, max: number) => Math.min(max, Math.max(min, m.width && m.height ? m.width / m.height : 16 / 9));
 
-function Video({ m }: { m: Media }) {
+/** Where a media block sits decides how tall it may be. */
+type MediaPlace = keyof typeof MEDIA_MAX_HEIGHT;
+/** The post the media belongs to, for "open at the source" when Kosha has nothing to play. */
+interface MediaOrigin {
+  url: string | null;
+  source: string;
+}
+
+function Video({ m, maxHeight, origin }: { m: Media; maxHeight: number; origin?: MediaOrigin }) {
   const gif = m.type === 'animated_gif';
+  const box = { aspectRatio: ratio(m, 0.6, 2.4), maxHeight };
+  // LinkedIn gives a poster but often no file: show it, and say where the video plays.
+  if (!m.stored && !m.remote_url && !m.variants?.length)
+    return (
+      <a href={origin?.url ?? '#'} target="_blank" rel="noopener noreferrer" style={box} className="relative block w-full overflow-hidden rounded-lg border border-line bg-sunken">
+        {m.preview_url && <img src={m.preview_url} alt={m.alt_text ?? ''} loading="lazy" className="absolute inset-0 h-full w-full object-contain" />}
+        <span className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-black/70 px-3 py-2 text-sm font-medium text-white">
+          <Play size={14} aria-hidden /> Open on {sourceName(origin?.source ?? 'the source')} to play
+        </span>
+      </a>
+    );
   return (
     <video
       src={bestVideoSrc(m)}
@@ -107,34 +134,46 @@ function Video({ m }: { m: Media }) {
       {...(gif ? { autoPlay: true, loop: true, muted: true } : { controls: true, preload: 'none' })}
       playsInline
       aria-label={m.alt_text ?? (gif ? 'Animated GIF' : 'Video')}
-      style={{ aspectRatio: ratio(m, 0.6, 2.4) }}
-      className="max-h-[520px] w-full rounded-lg border border-line bg-black object-contain"
+      style={box}
+      className="w-full rounded-lg border border-line bg-sunken object-contain"
     />
   );
 }
 
 /** Photos as a grid that opens the lightbox; videos and GIFs inline. Sizes are reserved up front so nothing jumps. */
-export function MediaBlock({ media }: { media: Media[] }) {
+export function MediaBlock({ media, place = 'list', origin }: { media: Media[]; place?: MediaPlace; origin?: MediaOrigin }) {
+  // Many photos arrive without dimensions; a lone one then takes its real shape once it has loaded,
+  // instead of sitting letterboxed in a guessed 16:9 box.
+  const [loadedRatio, setLoadedRatio] = useState<number | null>(null);
   if (!media.length) return null;
+  const maxHeight = MEDIA_MAX_HEIGHT[place];
   const photos = media.filter((m) => m.type === 'photo');
   const moving = media.filter((m) => m.type === 'video' || m.type === 'animated_gif');
   const other = media.filter((m) => !photos.includes(m) && !moving.includes(m));
-  const shown = photos.slice(0, 4);
+  // On a card: the first video and up to four photos; the reader shows every one.
+  const all = place === 'drawer';
+  const shown = all ? photos : photos.slice(0, 4);
+  const videos = all ? moving : moving.slice(0, 1);
+  const more = media.length - videos.length - shown.length - other.length;
+  const loneRatio = shown.length === 1 ? (shown[0].width && shown[0].height ? ratio(shown[0], 0.75, 2.4) : Math.min(2.4, Math.max(0.75, loadedRatio ?? 16 / 9))) : 16 / 9;
   return (
     <div className="space-y-2">
-      {moving.map((m) => (
-        <Video key={m.id} m={m} />
+      {videos.map((m) => (
+        <Video key={m.id} m={m} maxHeight={maxHeight} origin={origin} />
       ))}
       {shown.length > 0 && (
-        <div className={`grid gap-0.5 overflow-hidden rounded-lg border border-line ${shown.length > 1 ? 'grid-cols-2' : ''}`} style={{ aspectRatio: shown.length === 1 ? ratio(shown[0], 0.75, 2.4) : 16 / 9 }}>
+        // One photo is shown whole (contain) on a neutral ground; two to four fill the tiles of a 2×2 style grid.
+        // More than four (the reader only) flow on as further rows of the same tiles.
+        <div className={`grid gap-0.5 overflow-hidden rounded-lg border border-line ${shown.length > 1 ? 'grid-cols-2' : ''} ${shown.length === 3 || shown.length === 4 ? 'grid-rows-2' : ''}`} style={shown.length > 4 ? undefined : { aspectRatio: loneRatio, maxHeight }}>
           {shown.map((m, i) => (
-            <button key={m.id} aria-label={m.alt_text ?? `Open photo ${i + 1} of ${photos.length}`} onClick={() => openOverlay({ kind: 'lightbox', media: photos, index: i })} className={`relative min-h-0 bg-sunken ${shown.length === 3 && i === 0 ? 'row-span-2' : ''}`}>
-              <img src={m.preview_url ?? m.url} alt={m.alt_text ?? ''} loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
-              {i === 3 && photos.length > 4 && <span className="absolute inset-0 grid place-items-center bg-black/55 text-lg font-semibold text-white">+{photos.length - 4}</span>}
+            <button key={m.id} aria-label={m.alt_text ?? `Open photo ${i + 1} of ${photos.length}`} onClick={() => openOverlay({ kind: 'lightbox', media: photos, index: i })} className={`relative min-h-0 cursor-zoom-in bg-sunken ${shown.length === 3 && i === 0 ? 'row-span-2' : ''} ${shown.length > 4 ? 'aspect-video' : ''}`}>
+              <img src={m.preview_url ?? m.url} alt={m.alt_text ?? ''} loading="lazy" onLoad={shown.length === 1 ? (e) => setLoadedRatio(e.currentTarget.naturalWidth / Math.max(1, e.currentTarget.naturalHeight)) : undefined} className={`absolute inset-0 h-full w-full ${shown.length === 1 ? 'object-contain' : 'object-cover'}`} />
+              {i === shown.length - 1 && more > 0 && <span className="absolute inset-0 grid place-items-center bg-black/55 text-lg font-semibold text-white">+{more}</span>}
             </button>
           ))}
         </div>
       )}
+      {more > 0 && shown.length === 0 && <p className="text-sm text-ink-3">and {more} more; open the item to see all {media.length}</p>}
       {other.map((m) => (
         <a key={m.id} href={m.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-accent">
           <FileText size={16} aria-hidden /> Open {m.type}
@@ -212,24 +251,37 @@ export function Quote({ item }: { item: Item }) {
         <span className="shrink-0 text-ink-3">{shortDate(q.posted_at)}</span>
       </div>
       {q.unavailable_reason ? <p className="text-sm text-ink-2">{q.unavailable_reason}</p> : <Body item={q} clamp={CLAMP_LINES} className="text-[0.933rem]" />}
-      <MediaBlock media={q.media} />
+      <MediaBlock media={q.media} place="quote" origin={q} />
       {q.quote && <p className="text-sm text-ink-3">Quotes another post; open to see it.</p>}
     </div>
   );
 }
 
+/** Subtle mark that an agent attached the tag, with its confidence p; amber when in the doubtful band. */
+export function AgentBadge({ confidence }: { confidence: number | null }) {
+  const doubtful = confidence != null && confidence < DOUBTFUL_BELOW;
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-0.5 not-italic tabular-nums ${doubtful ? 'text-mark' : 'text-ink-3'}`} aria-label={`Attached by an agent${confidence != null ? `, confidence ${confidence.toFixed(2)}` : ''}`}>
+      <Bot size={11} aria-hidden />
+      {confidence != null && confidence.toFixed(2).replace(/^0/, '')}
+    </span>
+  );
+}
+
 function TagChip({ tag, children }: { tag: ItemTag; children: ReactNode }) {
   const proposed = tag.status === 'proposed';
+  const byAgent = tag.attached_by !== 'human' && tag.attached_by !== 'import';
   return (
     <button
       onClick={() => goQuery(`#${quoteValue(tag.path.join('/'))}`)}
-      title={`${proposed ? 'Proposed tag' : 'Tag'} ${tag.path.join('/')}${tag.attached_by !== 'human' ? ` · attached by ${tag.attached_by}${tag.confidence != null ? ` (${Math.round(tag.confidence * 100)}%)` : ''}` : ''}`}
-      // Proposed tags are dashed and italic until approved.
-      className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-px text-xs hover:border-ink-3 ${proposed ? 'border-dashed border-ink-3 italic text-ink-2' : 'border-line text-ink-2'}`}
+      title={`${proposed ? 'Proposed tag (not approved yet)' : 'Tag'} ${tag.path.join('/')}${byAgent ? ` · attached by an agent${tag.confidence != null ? `, confidence ${tag.confidence.toFixed(2)}` : ''}` : ''}`}
+      // Proposed tags are dashed, italic and unfilled until approved; approved ones are solid.
+      className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-px text-xs hover:border-ink-3 ${proposed ? 'border-dashed border-ink-3 italic text-ink-2' : 'border-line bg-sunken/60 text-ink-2'}`}
     >
-      <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tag.color ?? 'var(--ink-3)' }} />
+      <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${proposed ? 'border border-ink-3' : ''}`} style={proposed ? undefined : { background: tag.color ?? 'var(--ink-3)' }} />
       <span className="truncate">{children}</span>
       {proposed && <span className="not-italic text-ink-3">?</span>}
+      {byAgent && <AgentBadge confidence={tag.confidence} />}
     </button>
   );
 }
@@ -305,7 +357,9 @@ function Snippet({ text }: { text: string }) {
 }
 
 function Context({ item }: { item: Item }) {
-  if (!item.reply_to && !(item.thread && item.thread.member_count > 1)) return null;
+  // `member_count` is the posts held besides the root, so one is already a thread worth opening.
+  const inThread = !!item.thread && item.thread.member_count >= 1;
+  if (!item.reply_to && !inThread) return null;
   return (
     <div className="flex flex-wrap gap-x-3 text-sm text-ink-3">
       {item.reply_to && (
@@ -313,9 +367,9 @@ function Context({ item }: { item: Item }) {
           Replying to {item.reply_to.author_handle ? `@${item.reply_to.author_handle}` : 'a post'}
         </button>
       )}
-      {item.thread && item.thread.member_count > 1 && (
-        <button className="inline-flex items-center gap-1 font-medium text-accent hover:underline" onClick={() => setSearch({ item: item.id })}>
-          <BookOpen size={13} aria-hidden /> Read thread ({item.thread.member_count})
+      {inThread && (
+        <button className="inline-flex items-center gap-1 font-medium text-accent hover:underline" onClick={() => (focusItem(item.id, false), setSearch({ item: item.id }))}>
+          <BookOpen size={13} aria-hidden /> Read thread
         </button>
       )}
     </div>
@@ -368,7 +422,7 @@ function CardActions({ item }: { item: Item }) {
         </button>
       )}
       {item.url && (
-        <a className={cls} href={item.url} target="_blank" rel="noopener noreferrer" title={hint('Open the original', 'item.openOriginal')} aria-label="Open the original">
+        <a className={cls} href={item.url} target="_blank" rel="noopener noreferrer" title={hint(`Open on ${sourceName(item.source)}`, 'item.openOriginal')} aria-label={`Open on ${sourceName(item.source)}`}>
           <ExternalLink size={15} />
         </a>
       )}
@@ -395,7 +449,7 @@ export function ItemCard({ item, view }: { item: Item; view: View }) {
 
   if (view === 'compact')
     return (
-      <article {...root} className={`${shell} flex h-9 items-center gap-2 border-b border-line px-3 text-sm`}>
+      <article {...root} className={`${shell} flex h-11 items-center gap-2 border-b border-line px-3 text-sm`}>
         <SelectBox item={item} selected={selected} show={selecting} />
         <Avatar author={item.author} size={20} />
         <span className="w-32 shrink-0 truncate font-medium max-sm:w-20">{item.author.name ?? item.author.handle}</span>
@@ -413,7 +467,7 @@ export function ItemCard({ item, view }: { item: Item; view: View }) {
         {item.media.length > 0 && <span className="shrink-0 text-xs text-ink-3">{item.media[0].type === 'photo' ? `${item.media.length} img` : 'video'}</span>}
         <Marks item={item} />
         <SourceIcon source={item.source} />
-        <span className="w-16 shrink-0 text-right text-xs">
+        <span className="w-24 shrink-0 whitespace-nowrap text-right text-xs max-sm:w-auto">
           <PostedDate item={item} />
         </span>
       </article>
@@ -460,12 +514,12 @@ export function ItemCard({ item, view }: { item: Item; view: View }) {
     );
 
   return (
-    <article {...root} className={`${shell} flex gap-3 border-b border-line px-3 py-4 sm:px-4`}>
+    <article {...root} className={`${shell} flex gap-3 border-b border-line px-3 py-3 sm:px-4`}>
       <div className="flex shrink-0 flex-col items-center gap-2">
-        <Avatar author={item.author} />
+        <Avatar author={item.author} size={36} />
         <SelectBox item={item} selected={selected} show={selecting} />
       </div>
-      <div className="min-w-0 flex-1 space-y-2">
+      <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           {header}
           {/* A phone has no room for these next to the author; the reader drawer and the bulk bar have them. */}
@@ -473,12 +527,13 @@ export function ItemCard({ item, view }: { item: Item; view: View }) {
             <CardActions item={item} />
           </span>
         </div>
+        {item.author.headline && <p className="truncate text-sm text-ink-3">{item.author.headline}</p>}
         <Context item={item} />
         {item.title && <h3 className="text-lg font-semibold leading-snug">{item.title}</h3>}
         {item.unavailable_reason ? <p className="text-sm text-ink-2">{item.unavailable_reason}</p> : <Body item={item} clamp={CLAMP_LINES} />}
         {/* With the whole text on the card, the excerpt only helps when the match may be below the fold. */}
         {item.snippet && (item.body ?? '').length > CLAMP_CHARS && <Snippet text={item.snippet} />}
-        <MediaBlock media={item.media} />
+        <MediaBlock media={item.media} origin={item} />
         <Quote item={item} />
         {preview && <LinkPreview link={preview} />}
         <TagRow tags={item.tags} />
@@ -504,11 +559,12 @@ export function ItemFull({ item }: { item: Item }) {
             {item.author.handle && <span className="truncate">@{item.author.handle}</span>}
             <PostedDate item={item} />
           </div>
+          {item.author.headline && <div className="truncate text-sm text-ink-3">{item.author.headline}</div>}
         </div>
       </div>
       {item.title && <h2 className="text-xl font-semibold leading-snug">{item.title}</h2>}
       {item.unavailable_reason ? <p className="text-ink-2">{item.unavailable_reason}</p> : <Body item={item} clamp={null} className="text-[1.067rem]" />}
-      <MediaBlock media={item.media} />
+      <MediaBlock media={item.media} place="drawer" origin={item} />
       <Quote item={item} />
       {preview && <LinkPreview link={preview} />}
     </div>

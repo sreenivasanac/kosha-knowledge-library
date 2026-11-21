@@ -2,9 +2,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import { askExtension, getExtensionId } from './ArchiveTools';
-import { api, keybindingsQuery, settingsQuery, statsQuery, useCapabilities } from './api';
+import { api, keybindingsQuery, settingsQuery, useCapabilities } from './api';
 import { SEQUENCE_TIMEOUT_MS, STORAGE_KEYS } from './constants';
-import { usd } from './format';
+import { fullDate, usd } from './format';
+import { startSync } from './Palette';
+import { syncQuery } from './Shell';
 import { ACTIONS, defaultBindings, findConflicts, resolveBindings, strokeOf, type Area } from './keymap';
 import { openOverlay, toast, toastError } from './store';
 import { PageHeader } from './TagsPage';
@@ -31,6 +33,35 @@ function Toggle({ label, help, checked, onChange }: { label: string; help: strin
   );
 }
 
+/**
+ * What a status endpoint reports, as label and value rows. The server owns the
+ * shape (spend, sync and media-text status differ and may grow), so this shows
+ * every plain value it sends rather than a fixed list of fields.
+ */
+function Facts({ data }: { data: Record<string, unknown> }) {
+  const rows = Object.entries(data).filter(([, v]) => v != null && typeof v !== 'object');
+  const show = (key: string, v: unknown) => (typeof v === 'number' ? (/usd|cost|spen[dt]|cap|budget/.test(key) ? usd(v) : v.toLocaleString()) : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : /^\d{4}-\d\d-\d\dT/.test(String(v)) ? fullDate(String(v)) : String(v));
+  if (!rows.length) return <p className="text-sm text-ink-3">Nothing reported yet.</p>;
+  return (
+    <dl className="grid grid-cols-[minmax(0,14rem)_1fr] gap-x-3 gap-y-1 text-sm">
+      {rows.map(([key, v]) => (
+        <div key={key} className="contents">
+          <dt className="text-ink-3 first-letter:uppercase">{key.replace(/_usd$/, '').replaceAll('_', ' ')}</dt>
+          <dd className="min-w-0 break-words tabular-nums">{show(key, v)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** One status endpoint as a block of facts; says so inline when the server does not have it (yet). */
+function Status({ what, path, queryKey, enabled, refetchInterval }: { what: string; path: string; queryKey: string; enabled: boolean; refetchInterval?: number }) {
+  const status = useQuery({ queryKey: [queryKey], queryFn: () => api<Record<string, unknown>>(path), enabled, refetchInterval });
+  if (!enabled) return <Unavailable what={what} />;
+  if (status.error) return <ErrorNote error={status.error} what={what} retry={() => void status.refetch()} />;
+  return status.data ? <Facts data={status.data} /> : <div className="skeleton h-12" aria-busy="true" />;
+}
+
 interface Token {
   id: number;
   name: string;
@@ -51,7 +82,7 @@ function Tokens() {
   return (
     <>
       <p className="text-sm text-ink-2">Tokens let the extension, the MCP server and scripts use your library. A token is shown once, when it is created.</p>
-      {tokens.error && <ErrorNote error={tokens.error} />}
+      {tokens.error && <ErrorNote error={tokens.error} what="Managing API tokens here" />}
       <ul className="divide-y divide-line text-sm">
         {tokens.data?.map((t) => (
           <li key={t.id} className="flex items-center justify-between gap-3 py-1.5">
@@ -217,14 +248,26 @@ function Keybindings() {
   );
 }
 
+function CapForm({ stored, save }: { stored: number | undefined; save: (usd: number) => void }) {
+  const [cap, setCap] = useState(String(stored ?? ''));
+  return (
+    <form className="flex items-end gap-2" onSubmit={(e) => (e.preventDefault(), Number(cap) >= 0 && save(Number(cap)))}>
+      <label className="grid gap-1 text-sm font-medium">
+        Monthly cap (USD)
+        <input type="number" min={0} step={0.5} className="field w-32" value={cap} onChange={(e) => setCap(e.target.value)} />
+      </label>
+      <button className="btn" disabled={cap === '' || Number(cap) === stored}>
+        Save cap
+      </button>
+    </form>
+  );
+}
+
 export function SettingsPage() {
   const client = useQueryClient();
   const caps = useCapabilities();
   const settings = useQuery(settingsQuery);
-  const stats = useQuery(statsQuery).data ?? {};
   const s = settings.data ?? {};
-  const [cap, setCap] = useState('');
-  useEffect(() => setCap(String(s.x_api_monthly_cap_usd ?? '')), [s.x_api_monthly_cap_usd]);
 
   async function patch(body: Record<string, unknown>) {
     try {
@@ -234,9 +277,6 @@ export function SettingsPage() {
       toastError(error);
     }
   }
-  // Reported by the server once it tracks spend; the field name is tried in both places.
-  const spend = (stats.spend_month_usd ?? s.spend_month_usd ?? stats.x_api_spend_month_usd) as number | undefined;
-
   return (
     <div className="px-3 py-4 sm:px-5">
       <PageHeader title="Settings" />
@@ -252,16 +292,19 @@ export function SettingsPage() {
           </Card>
           <Card title="X API sync">
             <Toggle label="Sync new bookmarks from the X API" help="A paid daily fetch, on top of what the extension captures." checked={!!s.x_api_sync_enabled} onChange={(v) => void patch({ x_api_sync_enabled: v })} />
-            <form className="flex items-end gap-2" onSubmit={(e) => (e.preventDefault(), Number(cap) >= 0 && void patch({ x_api_monthly_cap_usd: Number(cap) }))}>
-              <label className="grid gap-1 text-sm font-medium">
-                Monthly cap (USD)
-                <input type="number" min={0} step={0.5} className="field w-32" value={cap} onChange={(e) => setCap(e.target.value)} />
-              </label>
-              <button className="btn" disabled={cap === '' || Number(cap) === s.x_api_monthly_cap_usd}>
-                Save cap
+            {/* Keyed by the stored value, so the field shows what the server holds after a save. */}
+            <CapForm key={String(s.x_api_monthly_cap_usd)} stored={s.x_api_monthly_cap_usd as number | undefined} save={(usd) => void patch({ x_api_monthly_cap_usd: usd })} />
+            <div className="flex items-center gap-3">
+              <button className="btn" disabled={!caps.sync} onClick={() => void startSync()}>
+                Sync now
               </button>
-            </form>
-            <p className="text-sm text-ink-2">Spent this month: {spend == null ? 'not reported by this server yet' : <strong className="text-ink">{usd(spend)}</strong>}</p>
+              {!caps.sync && <span className="text-sm text-ink-3">Starting a sync is not available on this server yet.</span>}
+            </div>
+            {caps.sync && <Status what="Sync status" path="/api/sync" queryKey={syncQuery.queryKey[0]} enabled />}
+          </Card>
+          <Card title="Spending">
+            <p className="text-sm text-ink-2">What paid work cost: X API sync, Jev checks, Ask, embeddings and media text.</p>
+            <Status what="The spending report" path="/api/spend" queryKey="spend" enabled={caps.spend} />
           </Card>
           <Card title="Media text">
             <p className="text-sm text-ink-2">Transcripts for video and audio, and descriptions for images. You see the count, the minutes and the cost before anything runs.</p>
@@ -269,6 +312,7 @@ export function SettingsPage() {
               Get text for all media without it
             </button>
             {!caps.mediaText && <Unavailable what="Media text" />}
+            {caps.mediaStatus && <Status what="Media text progress" path="/api/media-text/status" queryKey="media-text-status" enabled refetchInterval={10_000} />}
           </Card>
           <Card title="API tokens">
             <Tokens />

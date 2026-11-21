@@ -1,6 +1,6 @@
 /** The main view (also the Archive): search bar, tag chip row, the items in one of three layouts, numbered pages. */
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useSearch } from '@tanstack/react-router';
+import { Link, useSearch } from '@tanstack/react-router';
 import { Archive, ArchiveRestore, BookmarkPlus, ChevronLeft, ChevronRight, LayoutGrid, List, ListPlus, Menu, Rows3, Sparkles, Star, Tag, Trash2, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { runAction, setArchived } from './actions';
@@ -14,14 +14,16 @@ import { FilterChips, SearchBar } from './SearchBar';
 import { getState, openOverlay, setState, useStore } from './store';
 import { ErrorNote, useHint } from './ui';
 
+/** The reading column; notices and empty states share it so they line up with the list. */
+export const COLUMN = 'mx-auto max-w-[680px]';
 const LAYOUT: Record<View, string> = {
-  // A reading column of about 680px, left-aligned so the drawer never pushes it.
-  list: 'max-w-[680px] overflow-hidden rounded-lg border border-line bg-surface',
+  // A reading column of about 680px, centred in the space the sidebar and the drawer leave.
+  list: `${COLUMN} overflow-hidden rounded-lg border border-line bg-surface`,
   grid: 'grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3',
-  compact: 'max-w-[1100px] overflow-hidden rounded-lg border border-line bg-surface',
+  compact: 'mx-auto max-w-[1100px] overflow-hidden rounded-lg border border-line bg-surface',
 };
 /** Placeholder heights close to the real cards, so loading does not shift the page. */
-const SKELETON: Record<View, string> = { list: 'h-44 border-b border-line', grid: 'h-72 rounded-lg', compact: 'h-9 border-b border-line' };
+const SKELETON: Record<View, string> = { list: 'h-44 border-b border-line', grid: 'h-72 rounded-lg', compact: 'h-11 border-b border-line' };
 
 function Skeletons({ view }: { view: View }) {
   return (
@@ -51,7 +53,7 @@ function TagChips({ q, items }: { q: string; items: Item[] }) {
   let untagged: number | null;
   if (suggestedTags) {
     // `#a/*` ("only what is beneath") is a refinement for the bar, not a chip.
-    tags = suggestedTags.suggestions.filter((s) => s.kind === 'tag' && !s.insert.endsWith('/*') && s.count !== 0).map((s) => ({ token: s.insert.trim(), label: s.label, count: s.count }));
+    tags = suggestedTags.suggestions.filter((s) => s.kind === 'tag' && !/\/\*"?\s*$/.test(s.insert) && s.count !== 0).map((s) => ({ token: s.insert.trim(), label: s.label, count: s.count }));
     untagged = suggestedStates?.suggestions.find((s) => s.insert.trim() === 'untagged')?.count ?? null;
   } else {
     const counts = new Map<string, number>();
@@ -172,11 +174,11 @@ function pageWindow(page: number, pages: number): (number | null)[] {
   return sorted.flatMap((p, i) => (i > 0 && p - sorted[i - 1] > 1 ? [null, p] : [p]));
 }
 
-function Pagination({ page, pages, size }: { page: number; pages: number; size: number }) {
+function Pagination({ page, pages, size, view }: { page: number; pages: number; size: number; view: View }) {
   const hint = useHint();
   const go = (p: number) => setSearch({ page: p, item: undefined });
   return (
-    <nav aria-label="Pages" className="flex flex-wrap items-center gap-x-4 gap-y-2 py-4 text-sm">
+    <nav aria-label="Pages" className={`flex flex-wrap items-center gap-x-4 gap-y-2 py-4 text-sm ${view === 'grid' ? '' : view === 'compact' ? 'mx-auto max-w-[1100px]' : COLUMN}`}>
       <div className="flex items-center gap-1">
         <button className="btn px-2" disabled={page <= 1} onClick={() => go(page - 1)} title={hint('Previous page', 'page.prev')} aria-label="Previous page">
           <ChevronLeft size={15} />
@@ -221,12 +223,46 @@ function Pagination({ page, pages, size }: { page: number; pages: number; size: 
   );
 }
 
-function Empty({ q, archived }: { q: string; archived: boolean }) {
+/** Nothing saved at all: how to get the first items in. The steps are a real sequence, so they are numbered. */
+function FirstRun() {
+  const step = 'rounded-lg border border-line bg-surface px-4 py-3';
   return (
-    <div className="max-w-[680px] rounded-lg border border-dashed border-line px-6 py-12 text-center">
-      <p className="font-semibold">{archived ? 'The Archive is empty' : q ? 'Nothing matches this search' : 'No saved items yet'}</p>
+    <div className={`${COLUMN} space-y-3`}>
+      <h2 className="text-xl font-semibold tracking-tight">Bring your saved posts in</h2>
+      <p className="text-ink-2">Kosha fills from your own browser: the Kosha Capture extension copies what X and LinkedIn already show you.</p>
+      <ol className="list-inside list-decimal space-y-2 marker:font-semibold marker:text-ink-3">
+        <li className={step}>
+          <span className="font-medium">Load the extension.</span>
+          <span className="mt-1 block text-sm text-ink-2">
+            Run <code className="rounded bg-sunken px-1">pnpm install && pnpm build</code> in <code className="rounded bg-sunken px-1">extension/</code>. In Chrome open <code className="rounded bg-sunken px-1">chrome://extensions</code>, turn on Developer mode, press “Load unpacked” and choose <code className="rounded bg-sunken px-1">extension/dist</code>.
+          </span>
+        </li>
+        <li className={step}>
+          <span className="font-medium">Point it at this server.</span>
+          <span className="mt-1 block text-sm text-ink-2">
+            In the extension’s popup enter this server’s address and an API token (
+            <Link to="/settings" className="text-accent hover:underline">
+              create one in Settings
+            </Link>
+            ), then press “Test connection”.
+          </span>
+        </li>
+        <li className={step}>
+          <span className="font-medium">Start a backfill.</span>
+          <span className="mt-1 block text-sm text-ink-2">Press “Backfill” in the popup: it opens your X bookmarks and scrolls them to the end, slowly, then each folder. Keep that tab visible. For LinkedIn, press “Open saved posts”, then “Capture”. Items appear here as they arrive.</span>
+        </li>
+      </ol>
+    </div>
+  );
+}
+
+function Empty({ q, archived }: { q: string; archived: boolean }) {
+  if (!q && !archived) return <FirstRun />;
+  return (
+    <div className={`${COLUMN} rounded-lg border border-dashed border-line px-6 py-12 text-center`}>
+      <p className="font-semibold">{archived ? 'The Archive is empty' : 'Nothing matches this search'}</p>
       <p className="mt-1 text-sm text-ink-2">
-        {archived ? 'Items you mark for deletion wait here until you remove or restore them.' : q ? 'Remove a filter chip, or try fewer words.' : 'Open your bookmarks in the browser with the Kosha extension on, and they appear here.'}
+        {archived ? 'Items you mark for deletion wait here until you remove or restore them.' : 'Remove a filter chip, or try fewer words.'}
       </p>
       {q && (
         <button className="btn mt-4" onClick={() => setSearch({ q: undefined, snap: undefined, jq: undefined, page: undefined })}>
@@ -314,7 +350,7 @@ export function Library({ archived = false }: { archived?: boolean }) {
       <main className="pt-3" aria-label={archived ? 'Archive' : 'Library'}>
         {archived && <ArchiveTools />}
         {fresh && data.notice && (
-          <p role="status" className="mb-3 max-w-[680px] rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-2">
+          <p role="status" className={`${COLUMN} mb-3 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink-2`}>
             {data.notice}
           </p>
         )}
@@ -332,8 +368,8 @@ export function Library({ archived = false }: { archived?: boolean }) {
             ))}
           </div>
         )}
-        {data && data.pages > 1 && <Pagination page={s.page} pages={data.pages} size={s.size} />}
-        {data && data.pages <= 1 && data.total > 25 && <Pagination page={1} pages={1} size={s.size} />}
+        {data && data.pages > 1 && <Pagination page={s.page} pages={data.pages} size={s.size} view={s.view} />}
+        {data && data.pages <= 1 && data.total > 25 && <Pagination page={1} pages={1} size={s.size} view={s.view} />}
       </main>
     </div>
   );

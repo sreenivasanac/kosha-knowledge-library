@@ -27,10 +27,20 @@ export const SEARCH_DEBOUNCE_MS = 250;
 export const SEQUENCE_TIMEOUT_MS = 1200;
 export const TOAST_MS = 6000;
 export const RECENT_SEARCHES_MAX = 8;
-/** Body text longer than this is clamped on a card, with "more" to expand in place. */
+/** A match excerpt is shown on a card only when the body is longer than this (the match may be below the fold). */
 export const CLAMP_CHARS = 420;
-export const CLAMP_LINES = 9;
-export const JEV_DEFAULT_THRESHOLD = 0.5;
+/** Body text taller than this many lines is clamped on a card, with "more" to expand in place. */
+export const CLAMP_LINES = 8;
+/** Tallest a photo or video is drawn, in pixels; the lightbox shows the full size. */
+export const MEDIA_MAX_HEIGHT = { list: 420, quote: 260, drawer: 560 };
+/** Jev's cut-off for "yes" (docs/MCP.md); 0.8 to 0.9 is the band worth a spot check. */
+export const JEV_DEFAULT_THRESHOLD = 0.8;
+export const DOUBTFUL_BELOW = 0.9;
+/** Example shown in the Jev dialog: Jev reads literally, so a full sentence works best. */
+export const JEV_EXAMPLE_QUESTION = 'Is this post about retrieval-augmented generation (RAG)?';
+export const PIPELINE_HISTORY_MAX = 50;
+/** How often the sidebar asks the server for sync status. */
+export const SYNC_POLL_MS = 60_000;
 /** How often the Archive page asks the extension for removal progress. */
 export const REMOVAL_POLL_MS = 2000;
 
@@ -42,6 +52,7 @@ export const STORAGE_KEYS = {
   recent: 'kosha.recentSearches',
   extensionId: 'kosha.extensionId',
   position: 'kosha.position:',
+  pipelineHistory: 'kosha.pipelineHistory',
 };
 
 /** Sent as X-Requested-With on every request; the backend rejects writes without it. */

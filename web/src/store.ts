@@ -6,6 +6,7 @@
 import { useSyncExternalStore } from 'react';
 import type { Item, Media } from './api';
 import { STORAGE_KEYS, TOAST_MS } from './constants';
+import { currentSearch, hasDrawer } from './nav';
 
 export type Overlay =
   | { kind: 'picker'; mode: 'add' | 'remove'; ids: number[] }
@@ -15,6 +16,7 @@ export type Overlay =
   | { kind: 'jev'; question?: string }
   | { kind: 'mediaText'; ids: number[] | 'all' }
   | { kind: 'saveView'; name?: string }
+  | { kind: 'renameList'; id: number; name: string }
   | { kind: 'lightbox'; media: Media[]; index: number }
   | { kind: 'confirm'; title: string; body: string; action: string; danger?: boolean; run: () => void | Promise<void> };
 
@@ -100,8 +102,15 @@ export function setSidebarOpen(open: boolean) {
   setState({ sidebarOpen: open });
 }
 
-/** The items an action applies to: the selection when there is one, else the focused item. */
+/** The one item single-item keys act on: what the open drawer shows, else the focused item. */
+/** The item the reader drawer shows; it may be a quoted post that is not on the page. Read from the
+ *  URL, so a key pressed right after the drawer opens or closes already sees the new state. */
+export const drawerId = (): number | null => (hasDrawer() ? (currentSearch().item ?? null) : null);
+export const activeId = (): number | null => drawerId() ?? state.focusId;
+
+/** The items an action applies to: the selection when there is one, else the drawer's or the focused item. */
 export function targetIds(): number[] {
   if (state.selection.size) return [...state.selection];
-  return state.focusId != null ? [state.focusId] : [];
+  const id = activeId();
+  return id != null ? [id] : [];
 }

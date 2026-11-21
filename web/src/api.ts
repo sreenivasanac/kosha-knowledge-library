@@ -8,6 +8,8 @@ export interface Author {
   name: string | null;
   handle: string | null;
   avatar: string | null;
+  /** LinkedIn's line under the name, when the server sends it. */
+  headline?: string | null;
 }
 export interface Media {
   id: number;
@@ -196,8 +198,14 @@ export interface Capabilities {
   removals: boolean;
   tokens: boolean;
   sync: boolean;
+  ask: boolean;
+  query: boolean;
+  spend: boolean;
+  mediaStatus: boolean;
+  /** Rename and delete a list. */
+  listEdit: boolean;
 }
-const NO_CAPABILITIES: Capabilities = { search: false, parse: false, suggest: false, savedViews: false, lists: false, jev: false, mediaText: false, removals: false, tokens: false, sync: false };
+const NO_CAPABILITIES: Capabilities = { search: false, parse: false, suggest: false, savedViews: false, lists: false, jev: false, mediaText: false, removals: false, tokens: false, sync: false, ask: false, query: false, spend: false, mediaStatus: false, listEdit: false };
 
 async function fetchCapabilities(): Promise<Capabilities> {
   const doc = await api<{ paths: Record<string, Record<string, { parameters?: { name: string }[] }>> }>('/api/openapi.json');
@@ -213,6 +221,11 @@ async function fetchCapabilities(): Promise<Capabilities> {
     removals: has('/api/removals/pending'),
     tokens: has('/api/tokens'),
     sync: has('/api/sync'),
+    ask: has('/api/ask'),
+    query: has('/api/query'),
+    spend: has('/api/spend'),
+    mediaStatus: has('/api/media-text/status'),
+    listEdit: !!doc.paths['/api/lists/{list_id}']?.delete,
   };
 }
 export const capabilitiesQuery = { queryKey: ['capabilities'], queryFn: fetchCapabilities, staleTime: 60_000 };
@@ -331,5 +344,5 @@ export function flattenTags(nodes: TagNode[], prefix = '', depth = 0): FlatTag[]
 
 /** After anything that changes items or tags: refresh every list and count. */
 export function invalidateLibrary() {
-  for (const key of ['items', 'item', 'stats', 'tags', 'facets', 'collections', 'lists', 'proposed', 'suggest']) void queryClient.invalidateQueries({ queryKey: [key] });
+  for (const key of ['items', 'item', 'stats', 'tags', 'facets', 'collections', 'lists', 'suggest']) void queryClient.invalidateQueries({ queryKey: [key] });
 }

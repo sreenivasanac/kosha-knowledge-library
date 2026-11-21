@@ -53,6 +53,8 @@ export const getRouter = () => router;
 // (Esc then `v g`) each build on the one before instead of on the page still shown.
 export const pathname = () => router.latestLocation.pathname;
 export const isLibraryPath = (path = pathname()) => path === '/' || path === '/archive';
+/** Pages that list items and can show one in the reader drawer (`item` in the URL). */
+export const hasDrawer = (path = pathname()) => isLibraryPath(path) || path === '/ask';
 export const currentSearch = (): LibrarySearch => validateLibrarySearch(router.latestLocation.search as Record<string, unknown>);
 
 /** Drops values equal to the defaults so URLs stay short. */
@@ -65,7 +67,7 @@ function clean(s: LibrarySearch): LibrarySearch {
 
 /** Changes some URL state of the current library view. */
 export function setSearch(patch: LibrarySearch, replace = false) {
-  void router.navigate({ to: isLibraryPath() ? pathname() : '/', search: clean({ ...currentSearch(), ...patch }), replace });
+  void router.navigate({ to: hasDrawer() ? pathname() : '/', search: clean({ ...currentSearch(), ...patch }), replace });
 }
 
 /** Shows the library filtered by `q`, keeping the view, sort, mode and page size. */

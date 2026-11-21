@@ -36,7 +36,7 @@ describe('keymap registry', () => {
     m.feed('g');
     expect(m.feed('j')).toEqual({ type: 'action', id: 'move.next' });
     m.feed('g');
-    expect(m.feed('q')).toEqual({ type: 'none' });
+    expect(m.feed('9')).toEqual({ type: 'none' });
     expect(m.strokes()).toEqual([]);
   });
 

@@ -86,12 +86,27 @@ export function TagPicker({ mode, ids }: { mode: 'add' | 'remove'; ids: number[]
     });
 
   function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) (e.preventDefault(), moveTo((at + 1) % Math.max(rows.length, 1)));
-    else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) (e.preventDefault(), moveTo((at - 1 + rows.length) % Math.max(rows.length, 1)));
+    if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) {
+      e.preventDefault();
+      moveTo((at + 1) % Math.max(rows.length, 1));
+    }
+    else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) {
+      e.preventDefault();
+      moveTo((at - 1 + rows.length) % Math.max(rows.length, 1));
+    }
     else if (!row || busy) return;
-    else if (e.key === 'Enter') (e.preventDefault(), void (mode === 'remove' || (row.kind === 'current' && e.shiftKey) ? remove(row) : row.kind === 'current' ? closeOverlay() : add(row)));
-    else if (!text && (e.key === '1' || e.key === '2')) (e.preventDefault(), void setRole(row, e.key === '1' ? 'primary' : 'secondary'));
-    else if (!text && e.key === 'Backspace' && row.kind === 'current') (e.preventDefault(), void remove(row));
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      void (mode === 'remove' || (row.kind === 'current' && e.shiftKey) ? remove(row) : row.kind === 'current' ? closeOverlay() : add(row));
+    }
+    else if (!text && (e.key === '1' || e.key === '2')) {
+      e.preventDefault();
+      void setRole(row, e.key === '1' ? 'primary' : 'secondary');
+    }
+    else if (!text && e.key === 'Backspace' && row.kind === 'current') {
+      e.preventDefault();
+      void remove(row);
+    }
   }
 
   return (

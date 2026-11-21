@@ -1,17 +1,18 @@
 /** App frame: the collapsible sidebar, the page, the reader drawer and the overlays. */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Outlet, useLocation, useNavigate, useSearch } from '@tanstack/react-router';
-import { Archive, ChevronRight, CircleDot, HelpCircle, Inbox, LogOut, PanelLeftClose, PanelLeftOpen, Search, Settings, Sparkles, Star, Tags, X } from 'lucide-react';
+import { Archive, ChevronRight, CircleDot, HelpCircle, Inbox, LogOut, MessageCircleQuestion, PanelLeftClose, PanelLeftOpen, Pencil, RefreshCw, Search, Settings, Sparkles, Star, Tags, Terminal, X } from 'lucide-react';
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { runAction } from './actions';
-import { api, collectionsQuery, facetsQuery, flattenTags, meQuery, statsQuery, tagsQuery, useLists, useSavedViews, type TagNode } from './api';
-import { APP_NAME } from './constants';
+import { api, collectionsQuery, facetsQuery, flattenTags, invalidateLibrary, meQuery, statsQuery, tagsQuery, useCapabilities, useLists, useSavedViews, type TagNode } from './api';
+import { APP_NAME, SYNC_POLL_MS } from './constants';
+import { ago, fullDate } from './format';
 import { Drawer } from './Drawer';
 import { KeyboardLayer } from './KeyboardLayer';
-import { goQuery, setSearch, validateLibrarySearch } from './nav';
+import { goQuery, hasDrawer, setSearch, validateLibrarySearch } from './nav';
 import { Overlays, Toasts } from './Overlays';
 import { quoteValue } from './query';
-import { setSidebarOpen, setState, toastError, useStore } from './store';
+import { openOverlay, setSidebarOpen, setState, toast, toastError, useStore } from './store';
 import { useHint } from './ui';
 
 /** One sidebar row: label on the left, count on the right, highlighted when it is the current view. */
@@ -83,7 +84,9 @@ function TagTree({ q }: { q: string }) {
         <div className="skeleton mx-2 h-16" />
       ) : tree.length === 0 ? (
         <p className="px-2 py-1 text-sm text-ink-3">
-          No tags yet. Press <kbd className="kbd">t</kbd> on an item to add one.
+          {/* Proposed tags are not in this tree until approved; say where they are instead of "no tags". */}
+          {(tags.data ?? []).length > 0 ? 'No approved tags yet. Review the proposed ones above, or press ' : 'No tags yet. Press '}
+          <kbd className="kbd">t</kbd> on an item to add one.
         </p>
       ) : (
         <>
@@ -92,6 +95,34 @@ function TagTree({ q }: { q: string }) {
         </>
       )}
     </Section>
+  );
+}
+
+/** What the sync endpoint reports; every field is optional because the server decides the shape. */
+export interface SyncInfo {
+  status?: string;
+  running?: boolean;
+  enabled?: boolean;
+  last_sync_at?: string | null;
+  last_run_at?: string | null;
+  last_error?: string | null;
+}
+export const syncQuery = { queryKey: ['sync'], queryFn: () => api<SyncInfo>('/api/sync'), refetchInterval: SYNC_POLL_MS };
+
+/** Sidebar footer line: when the extension last delivered, and the X API sync's state when the server has one. */
+function SyncStatus({ lastCapture }: { lastCapture: string | null }) {
+  const caps = useCapabilities();
+  const sync = useQuery({ ...syncQuery, enabled: caps.sync }).data;
+  const running = sync?.running || sync?.status === 'running';
+  const lastSync = sync?.last_sync_at ?? sync?.last_run_at;
+  return (
+    <p role="status" className="flex items-center gap-1.5 border-t border-line px-3 py-1.5 text-xs text-ink-3" title={lastCapture ? `Last capture from the extension: ${fullDate(lastCapture)}` : undefined}>
+      <RefreshCw size={11} aria-hidden className={running ? 'animate-spin' : ''} />
+      <span className="min-w-0 flex-1 truncate">
+        {running ? 'Syncing from the X API…' : sync?.last_error ? `Sync failed: ${sync.last_error}` : lastCapture ? `Last capture ${ago(lastCapture)}` : 'Nothing captured yet'}
+        {!running && !sync?.last_error && lastSync && ` · API sync ${ago(lastSync)}`}
+      </span>
+    </p>
   );
 }
 
@@ -104,7 +135,8 @@ function Sidebar({ rail }: { rail: boolean }) {
   const stats = useQuery(statsQuery).data ?? {};
   const facets = useQuery(facetsQuery).data;
   const collections = useQuery(collectionsQuery).data ?? [];
-  const proposed = useQuery({ queryKey: ['proposed'], queryFn: () => api<TagNode[]>('/api/tags?status=proposed') }).data;
+  const allTags = useQuery(tagsQuery).data;
+  const caps = useCapabilities();
   const views = useSavedViews();
   const lists = useLists();
   const hint = useHint();
@@ -118,8 +150,10 @@ function Sidebar({ rail }: { rail: boolean }) {
     { label: 'Unread', icon: <CircleDot size={15} />, count: n('unread'), active: q === 'is:unread', action: 'go.unread' },
     { label: 'Starred', icon: <Star size={15} />, count: n('starred'), active: q === 'is:starred', action: 'go.starred' },
     { label: 'Untagged', icon: <Tags size={15} />, count: n('untagged'), active: q === 'is:untagged', action: 'go.untagged' },
-    { label: 'Proposed tags', icon: <Sparkles size={15} />, count: proposed ? flattenTags(proposed).filter((t) => t.node.status === 'proposed').length : null, active: location.pathname === '/proposed', action: 'go.proposed' },
+    { label: 'Proposed tags', icon: <Sparkles size={15} />, count: allTags ? flattenTags(allTags).filter((t) => t.node.status === 'proposed').length : null, active: location.pathname === '/proposed', action: 'go.proposed' },
     { label: 'Archive', icon: <Archive size={15} />, count: n('archived'), active: location.pathname === '/archive', action: 'go.archive' },
+    { label: 'Ask', icon: <MessageCircleQuestion size={15} />, count: null, active: location.pathname === '/ask', action: 'go.ask' },
+    { label: 'Pipeline console', icon: <Terminal size={15} />, count: null, active: location.pathname === '/console', action: 'go.console' },
   ];
 
   async function signOut() {
@@ -218,10 +252,36 @@ function Sidebar({ rail }: { rail: boolean }) {
             </p>
           )}
           {lists.map((l) => (
-            <Row key={l.id} label={l.name} count={l.count} active={q === `list:${quoteValue(l.name)}`} onClick={() => goQuery(`list:${quoteValue(l.name)}`)} />
+            <Row key={l.id} label={l.name} count={l.count} active={q === `list:${quoteValue(l.name)}`} onClick={() => goQuery(`list:${quoteValue(l.name)}`)}>
+              {caps.listEdit && (
+                <span className="order-last mr-1 flex opacity-0 focus-within:opacity-100 group-hover/row:opacity-100">
+                  <button aria-label={`Rename the list ${l.name}`} title="Rename" className="grid h-5 w-5 place-items-center rounded text-ink-3 hover:text-ink" onClick={() => openOverlay({ kind: 'renameList', id: l.id, name: l.name })}>
+                    <Pencil size={11} />
+                  </button>
+                  <button
+                    aria-label={`Delete the list ${l.name}`}
+                    title="Delete"
+                    className="grid h-5 w-5 place-items-center rounded text-ink-3 hover:text-danger"
+                    onClick={() =>
+                      openOverlay({
+                        kind: 'confirm',
+                        danger: true,
+                        title: `Delete the list ${l.name}?`,
+                        body: 'The list goes; its items stay in your library.',
+                        action: 'Delete list',
+                        run: () => api(`/api/lists/${l.id}`, { method: 'DELETE' }).then(() => (toast(`Deleted the list ${l.name}`), invalidateLibrary()), toastError),
+                      })
+                    }
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              )}
+            </Row>
           ))}
         </Section>
       </div>
+      <SyncStatus lastCapture={typeof stats.last_capture_at === 'string' ? stats.last_capture_at : null} />
       <div className="flex items-center gap-1 border-t border-line px-2 py-1.5">
         <button className="btn btn-ghost px-2" onClick={go('/settings')} aria-current={location.pathname === '/settings' ? 'page' : undefined}>
           <Settings size={15} /> Settings
@@ -253,7 +313,7 @@ export function Shell() {
   const navigate = useNavigate();
   const search = validateLibrarySearch(useSearch({ strict: false }) as Record<string, unknown>);
   const me = useQuery(meQuery);
-  const drawerItem = location.pathname === '/' || location.pathname === '/archive' ? search.item : undefined;
+  const drawerItem = hasDrawer(location.pathname) ? search.item : undefined;
 
   // The session ended (a 401 cleared the cached user): back to the login page.
   useEffect(() => {
@@ -272,7 +332,8 @@ export function Shell() {
         <Sidebar rail={desktop && !sidebarOpen} />
       </aside>
       {mobileNav && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setState({ mobileNav: false })} />}
-      <div id="page" className={sidebarOpen ? 'lg:pl-64' : 'lg:pl-12'}>
+      {/* On a wide screen the page makes room for the drawer, so the reading column recentres without changing width (nothing reflows). */}
+      <div id="page" className={`${sidebarOpen ? 'lg:pl-64' : 'lg:pl-12'} ${drawerItem != null ? 'min-[1400px]:pr-(--drawer-w)' : ''}`}>
         <Outlet />
       </div>
       {drawerItem != null && <Drawer id={drawerItem} onClose={() => setSearch({ item: undefined })} />}

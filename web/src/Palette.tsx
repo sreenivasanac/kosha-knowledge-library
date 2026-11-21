@@ -2,7 +2,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { runAction, tagByPath } from './actions';
-import { api, flattenTags, getCapabilities, tagsQuery, useLists, useSavedViews } from './api';
+import { api, flattenTags, getCapabilities, queryClient, tagsQuery, useLists, useSavedViews } from './api';
 import { SORTS, VIEWS, type View } from './constants';
 import { ACTIONS } from './keymap';
 import { getRouter, goQuery, goTo, setSearch } from './nav';
@@ -21,11 +21,12 @@ interface Command {
   run: () => void;
 }
 
-async function sync() {
+export async function startSync() {
   if (!getCapabilities().sync) return toast('Sync from the X API is not available on this server yet');
   try {
     await api('/api/sync', { method: 'POST' });
     toast('Sync started');
+    void queryClient.invalidateQueries({ queryKey: ['sync'] });
   } catch (error) {
     toastError(error);
   }
@@ -39,13 +40,14 @@ const SLASH: { name: string; arg?: string; help: string; run: (arg: string) => v
   { name: '/sort', arg: SORTS.slice(1).map((s) => s.value).join(' | '), help: 'Change the order', run: (arg) => (arg ? setSearch({ sort: arg, page: undefined }) : toast('Use /sort posted, for example', { error: true })) },
   { name: '/save-view', arg: 'name', help: 'Save the current search as a view', run: (arg) => openOverlay({ kind: 'saveView', name: arg }) },
   { name: '/jev', arg: 'question', help: 'Check every item in the result against a yes/no question', run: (arg) => openOverlay({ kind: 'jev', question: arg }) },
-  { name: '/sync', help: 'Fetch new bookmarks from the X API', run: () => void sync() },
+  { name: '/sync', help: 'Fetch new bookmarks from the X API', run: () => void startSync() },
 ];
 
 export function Palette({ scope, initial = '' }: { scope?: 'tags' | 'lists'; initial?: string }) {
   const [text, setText] = useState(initial);
   const [active, setActive] = useState(0);
-  const tags = flattenTags(useQuery(tagsQuery).data ?? []).filter((t) => t.node.status === 'approved');
+  // Proposed tags can be jumped to as well (a fresh library has nothing else); they say what they are.
+  const tags = flattenTags(useQuery(tagsQuery).data ?? []).filter((t) => t.node.status !== 'rejected');
   const views = useSavedViews();
   const lists = useLists();
   const bindings = useBindings();
@@ -65,7 +67,7 @@ export function Palette({ scope, initial = '' }: { scope?: 'tags' | 'lists'; ini
       run: () => c.run(arg),
     }));
   } else {
-    const tagCommands: Command[] = tags.filter((t) => hit(t.path)).map((t) => ({ section: 'Tags', label: `#${t.path}`, count: t.node.count, run: () => goQuery(`#${quoteValue(t.path)}`) }));
+    const tagCommands: Command[] = tags.filter((t) => hit(t.path)).map((t) => ({ section: 'Tags', label: `#${t.path}`, detail: t.node.status === 'proposed' ? 'Proposed tag' : undefined, count: t.node.count, run: () => goQuery(`#${quoteValue(t.path)}`) }));
     const listCommands: Command[] = lists.filter((l) => hit(l.name)).map((l) => ({ section: 'Lists', label: l.name, count: l.count, run: () => goQuery(`list:${quoteValue(l.name)}`) }));
     if (scope === 'tags') commands = tagCommands;
     else if (scope === 'lists') commands = listCommands;
@@ -77,7 +79,8 @@ export function Palette({ scope, initial = '' }: { scope?: 'tags' | 'lists'; ini
         ...views.map((v) => ({ section: 'Go to', label: v.name, detail: 'Saved view', run: () => void getRouter().navigate({ to: '/', search: { q: v.query || undefined, ...(v.params ?? {}) } }) })),
       ].filter((c) => hit(c.label));
       commands = [
-        ...(text.trim() ? [{ section: 'Ask', label: text.trim(), detail: 'Answers with cited items are coming. For now this runs a search.', run: () => goQuery(text.trim()) }] : []),
+        ...(text.trim() ? [{ section: 'Ask', label: text.trim(), detail: 'Answer this from your library, with the items it used', run: () => void getRouter().navigate({ to: '/ask', search: { q: text.trim() } }) },
+              { section: 'Search', label: text.trim(), detail: 'Search the library for these words', run: () => goQuery(text.trim()) }] : []),
         ...go,
         ...tagCommands.slice(0, text.trim() ? 8 : 5),
         ...listCommands.slice(0, 5),
@@ -113,9 +116,18 @@ export function Palette({ scope, initial = '' }: { scope?: 'tags' | 'lists'; ini
         value={text}
         onChange={(e) => (setText(e.target.value), setActive(0))}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) (e.preventDefault(), setActive((at + 1) % Math.max(commands.length, 1)));
-          else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) (e.preventDefault(), setActive((at - 1 + commands.length) % Math.max(commands.length, 1)));
-          else if (e.key === 'Enter') (e.preventDefault(), execute(commands[at]));
+          if (e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')) {
+            e.preventDefault();
+            setActive((at + 1) % Math.max(commands.length, 1));
+          }
+          else if (e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')) {
+            e.preventDefault();
+            setActive((at - 1 + commands.length) % Math.max(commands.length, 1));
+          }
+          else if (e.key === 'Enter') {
+            e.preventDefault();
+            execute(commands[at]);
+          }
         }}
         className="h-12 w-full border-b border-line bg-transparent px-4 text-base outline-none placeholder:text-ink-3"
       />

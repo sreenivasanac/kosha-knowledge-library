@@ -36,6 +36,8 @@ export const ACTIONS: ActionDef[] = [
   { id: 'go.starred', area: 'Go to', label: 'Starred', keys: 'g s' },
   { id: 'go.proposed', area: 'Go to', label: 'Proposed tags', keys: 'g p' },
   { id: 'go.archive', area: 'Go to', label: 'Archive', keys: 'g x' },
+  { id: 'go.ask', area: 'Go to', label: 'Ask', keys: 'g k' },
+  { id: 'go.console', area: 'Go to', label: 'Pipeline console', keys: 'g q' },
   { id: 'go.tag', area: 'Go to', label: 'Jump to a tag', keys: 'g t' },
   { id: 'go.list', area: 'Go to', label: 'Jump to a list', keys: 'g l' },
 
@@ -69,6 +71,9 @@ export const ACTIONS: ActionDef[] = [
 
   { id: 'proposed.approve', area: 'Proposed tags', label: 'Approve the proposed tag', keys: 'a' },
   { id: 'proposed.reject', area: 'Proposed tags', label: 'Reject the proposed tag', keys: 'r' },
+  { id: 'proposed.approveTree', area: 'Proposed tags', label: 'Approve the tag and all under it', keys: 'Shift+a' },
+  { id: 'proposed.rejectTree', area: 'Proposed tags', label: 'Reject the tag and all under it', keys: 'Shift+x' },
+  { id: 'proposed.doubtful', area: 'Proposed tags', label: 'Show only doubtful items (conf below 0.9)', keys: 'u' },
 ];
 
 export type Bindings = Record<string, string>;

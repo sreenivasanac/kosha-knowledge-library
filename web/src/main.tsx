@@ -4,6 +4,8 @@ import { createRootRoute, createRoute, createRouter, Link, Outlet, redirect, Rou
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api, ApiError, capabilitiesQuery, meQuery, queryClient } from './api';
+import { AskPage } from './AskPage';
+import { ConsolePage } from './ConsolePage';
 import { APP_NAME, APP_TAGLINE } from './constants';
 import './index.css';
 import { Library } from './Library';
@@ -93,6 +95,8 @@ const routeTree = rootRoute.addChildren([
   appRoute.addChildren([
     createRoute({ getParentRoute: () => appRoute, path: '/', validateSearch: validateLibrarySearch, component: () => <Library /> }),
     createRoute({ getParentRoute: () => appRoute, path: '/archive', validateSearch: validateLibrarySearch, component: () => <Library archived /> }),
+    createRoute({ getParentRoute: () => appRoute, path: '/ask', validateSearch: validateLibrarySearch, component: AskPage }),
+    createRoute({ getParentRoute: () => appRoute, path: '/console', component: ConsolePage }),
     createRoute({ getParentRoute: () => appRoute, path: '/tags', component: TagsPage }),
     createRoute({ getParentRoute: () => appRoute, path: '/proposed', component: ProposedPage }),
     createRoute({ getParentRoute: () => appRoute, path: '/settings', component: SettingsPage }),

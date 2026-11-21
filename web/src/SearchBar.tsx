@@ -153,12 +153,24 @@ export function SearchBar({ q, mode, error, leftover }: { q: string; mode: Mode;
               rememberSearch(text);
             }}
             onKeyDown={(e) => {
-              if (e.key === 'ArrowDown' && open) (e.preventDefault(), setActive((active + 1) % options.length));
-              else if (e.key === 'ArrowUp' && open) (e.preventDefault(), setActive((active - 1 + options.length) % options.length));
-              else if (e.key === 'Tab' && open && !e.shiftKey) (e.preventDefault(), accept(Math.max(active, 0)));
+              if (e.key === 'ArrowDown' && open) {
+                e.preventDefault();
+                setActive((active + 1) % options.length);
+              }
+              else if (e.key === 'ArrowUp' && open) {
+                e.preventDefault();
+                setActive((active - 1 + options.length) % options.length);
+              }
+              else if (e.key === 'Tab' && open && !e.shiftKey) {
+                e.preventDefault();
+                accept(Math.max(active, 0));
+              }
               else if (e.key === 'Enter') {
                 if (open && active >= 0) accept(active);
-                else (rememberSearch(text), input.current?.blur());
+                else {
+                  rememberSearch(text);
+                  input.current?.blur();
+                }
               }
             }}
             className={`field h-9 w-full pl-8 pr-8 text-[0.933rem] ${syntaxError ? 'border-danger' : ''}`}
@@ -191,6 +203,14 @@ export function SearchBar({ q, mode, error, leftover }: { q: string; mode: Mode;
             </ul>
           )}
         </div>
+        {/* A phone has no room for three buttons beside the input; the same choice as a native menu. */}
+        <select aria-label="Search mode" className="field h-9 shrink-0 px-1.5 text-xs capitalize md:hidden" value={mode} onChange={(e) => setSearch({ mode: e.target.value as Mode, page: undefined })}>
+          {MODES.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
         <div role="radiogroup" aria-label="Search mode" className="flex shrink-0 rounded-md border border-line bg-surface p-0.5 max-md:hidden">
           {MODES.map((m) => (
             <button key={m} role="radio" aria-checked={mode === m} onClick={() => setSearch({ mode: m, page: undefined })} className={`rounded px-2 py-1 text-xs font-medium capitalize ${mode === m ? 'bg-accent-soft text-accent' : 'text-ink-2 hover:text-ink'}`}>

@@ -4,9 +4,9 @@
  * Single-item actions apply to the selection when one exists (`targetIds`).
  */
 import { api, fetchItems, flattenTags, invalidateLibrary, queryClient, tagsQuery, type Item, type ItemPage, type TagNode } from './api';
-import { currentSearch, goQuery, goTo, isLibraryPath, pathname, setSearch, withDefaults } from './nav';
+import { currentSearch, goQuery, goTo, hasDrawer, isLibraryPath, pathname, setSearch, withDefaults } from './nav';
 import { toggleToken } from './query';
-import { closeOverlay, getState, openOverlay, setState, targetIds, toast, toastError } from './store';
+import { activeId, closeOverlay, drawerId, getState, openOverlay, setState, targetIds, toast, toastError } from './store';
 import type { View } from './constants';
 
 /** Handlers a page registers for itself (the Proposed tags screen: approve, reject). */
@@ -19,7 +19,7 @@ const plural = (n: number, word = 'item') => `${n} ${word}${n === 1 ? '' : 's'}`
 export function focusItem(id: number | null, scroll = true) {
   setState({ focusId: id });
   if (id == null) return;
-  if (isLibraryPath() && currentSearch().item && currentSearch().item !== id) setSearch({ item: id }, true);
+  if (hasDrawer() && currentSearch().item && currentSearch().item !== id) setSearch({ item: id }, true);
   if (scroll) requestAnimationFrame(() => reveal(document.querySelector(`[data-focus-id="${id}"]`)));
 }
 
@@ -27,6 +27,8 @@ export function focusItem(id: number | null, scroll = true) {
  *  window is shown from its top, so its author line is never hidden. */
 function reveal(el: Element | null) {
   if (!el) return;
+  // A list that scrolls inside its own box (the proposed-tag tree) moves that box, not the window.
+  if (el.closest('[data-own-scroll]')) return el.scrollIntoView({ block: 'nearest' });
   const top = (document.querySelector('[data-sticky-header]')?.getBoundingClientRect().bottom ?? 0) + 8;
   const bottom = window.innerHeight - 16;
   const r = el.getBoundingClientRect();
@@ -80,7 +82,7 @@ export async function undo(batch?: number) {
 /** Turns a flag on for the targets, or off when every target already has it. */
 function toggleFlag(field: 'starred' | 'read', onText: string, offText: string) {
   const ids = targetIds();
-  const known = ids.map((id) => getState().pageItems.get(id));
+  const known = ids.map(itemById);
   const value = !known.every((i) => i?.[field]);
   patchCached(ids, { [field]: value });
   void bulk(ids, { [field]: value }, `${value ? onText : offText} ${plural(ids.length)}`);
@@ -146,7 +148,9 @@ async function copy(text: string, what: string) {
   }
 }
 
-const targetItems = (): Item[] => targetIds().map((id) => getState().pageItems.get(id)).filter((i): i is Item => !!i);
+/** An item on the page, or one the drawer loaded (a quoted post, a thread parent). */
+const itemById = (id: number): Item | undefined => getState().pageItems.get(id) ?? queryClient.getQueryData<Item>(['item', id]);
+const targetItems = (): Item[] => targetIds().map(itemById).filter((i): i is Item => !!i);
 
 export const markdownOf = (i: Item) => {
   const title = (i.title ?? i.body ?? '').replace(/\s+/g, ' ').slice(0, 80).trim();
@@ -195,13 +199,13 @@ function escape() {
   if (getState().overlay) return closeOverlay();
   if (active && active !== document.body && active.matches('input, textarea, select, [contenteditable="true"]')) return active.blur();
   if (getState().mobileNav) return setState({ mobileNav: false });
-  if (isLibraryPath() && currentSearch().item) return setSearch({ item: undefined });
+  if (hasDrawer() && currentSearch().item) return setSearch({ item: undefined });
   if (getState().selection.size) return setState({ selection: new Set() });
 }
 
 function togglePlay() {
-  const id = getState().focusId;
-  const video = document.querySelector<HTMLVideoElement>(`[data-drawer] video[controls], [data-focus-id="${id}"] video[controls]`);
+  // The drawer's video when it is open; otherwise the focused card's.
+  const video = document.querySelector<HTMLVideoElement>(drawerId() != null ? '[data-drawer] video[controls]' : `[data-focus-id="${getState().focusId}"] video[controls]`);
   if (!video) return toast('This item has no video');
   if (video.paused) void video.play();
   else video.pause();
@@ -213,7 +217,8 @@ const pageBy = (delta: number) => {
   if (isLibraryPath() && page >= 1 && page <= Math.max(1, Math.ceil(getState().total / withDefaults(currentSearch()).size))) setSearch({ page, item: undefined });
 };
 const withFocused = (fn: (item: Item) => void) => () => {
-  const item = getState().focusId != null ? getState().pageItems.get(getState().focusId!) : undefined;
+  const id = activeId();
+  const item = id != null ? itemById(id) : undefined;
   if (item) fn(item);
 };
 const needTargets = (fn: (ids: number[]) => void) => () => {
@@ -238,6 +243,8 @@ const handlers: Record<string, () => void> = {
   'go.starred': () => goQuery('is:starred'),
   'go.proposed': () => goTo('/proposed'),
   'go.archive': () => goTo('/archive'),
+  'go.ask': () => goTo('/ask'),
+  'go.console': () => goTo('/console'),
   'go.tag': () => openOverlay({ kind: 'palette', scope: 'tags' }),
   'go.list': () => openOverlay({ kind: 'palette', scope: 'lists' }),
 

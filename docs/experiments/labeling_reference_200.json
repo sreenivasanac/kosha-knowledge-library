@@ -1,0 +1,2893 @@
+{
+ "note": "LLM reference, not the owner's judgment. 200 saved items drawn with `all | sample 200 42`. topic = free 3-6 word description written by gpt-6.2-sol from the item's text before any tree existed; pick_tree_v1 / pick_tree_v2 = the path the same model chose from each tree (or none). No item text is stored here. To correct: edit `topic` or the picks, or add an `owner` field per item.",
+ "model": "gpt-6.2-sol",
+ "seed": 42,
+ "items": [
+  {
+   "id": 39,
+   "topic": "Interactive 3D periodic table",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": []
+   }
+  },
+  {
+   "id": 53,
+   "topic": "Tesla Model Y assembly visualization",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Creative AI"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Creative AI"
+    ]
+   }
+  },
+  {
+   "id": 97,
+   "topic": "India’s 2024 booth-level election data",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "India & Tamil Nadu",
+    "others": [
+     "Society & Politics"
+    ]
+   }
+  },
+  {
+   "id": 241,
+   "topic": "Automated daily research analysis videos",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Research Papers",
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 227,
+   "topic": "Claude Code Mods beginner guide",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   }
+  },
+  {
+   "id": 290,
+   "topic": "Grok bots for privacy cleanup",
+   "pick_tree_v1": {
+    "primary": "AI Products & Tools",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI Products & Tools",
+    "others": []
+   }
+  },
+  {
+   "id": 317,
+   "topic": "Chitra-kavya video with text-to-speech",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   }
+  },
+  {
+   "id": 315,
+   "topic": "Open-source robotics projects for beginners",
+   "pick_tree_v1": {
+    "primary": "Robotics & Hardware",
+    "others": [
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Robotics & Hardware",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 391,
+   "topic": "Decision language model training tutorial",
+   "pick_tree_v1": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 412,
+   "topic": "AI skills for B2B product marketing",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/Ideas & Indie Hacking",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Startups & Business",
+    "others": [
+     "AI Products & Tools"
+    ]
+   }
+  },
+  {
+   "id": 444,
+   "topic": "India’s barriers to domestic accounting giants",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   }
+  },
+  {
+   "id": 498,
+   "topic": "CCTV-based retail shelf attention tracking",
+   "pick_tree_v1": {
+    "primary": "AI Products & Tools",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI Products & Tools",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   }
+  },
+  {
+   "id": 548,
+   "topic": "Faster on-device structured JSON inference",
+   "pick_tree_v1": {
+    "primary": "AI/Models & Releases",
+    "others": [
+     "AI/Local Inference & GPUs"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Models & Releases",
+    "others": [
+     "AI/Local Inference & GPUs"
+    ]
+   }
+  },
+  {
+   "id": 627,
+   "topic": "AI agent evaluation masterclass",
+   "pick_tree_v1": {
+    "primary": "AI/Prompting & Evals",
+    "others": [
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Prompting & Evals",
+    "others": [
+     "AI/Agents",
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 641,
+   "topic": "MIT TinyML and efficient computing",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Local Inference & GPUs"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   }
+  },
+  {
+   "id": 669,
+   "topic": "Hackathon for AI agent products",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": [
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": []
+   }
+  },
+  {
+   "id": 737,
+   "topic": "Model quantization fundamentals for inference",
+   "pick_tree_v1": {
+    "primary": "AI/Local Inference & GPUs",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Local Inference & GPUs",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 729,
+   "topic": "unclear: AI wealth advice teaser",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/Ideas & Indie Hacking",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Startups & Business",
+    "others": []
+   }
+  },
+  {
+   "id": 806,
+   "topic": "unclear: AI prototype demo snippet",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": []
+   }
+  },
+  {
+   "id": 860,
+   "topic": "Gemini’s token-efficient long-video understanding",
+   "pick_tree_v1": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   }
+  },
+  {
+   "id": 843,
+   "topic": "Claude-powered people search tool",
+   "pick_tree_v1": {
+    "primary": "AI Products & Tools",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI Products & Tools",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 881,
+   "topic": "Webcam gesture controls for spellcasting",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   }
+  },
+  {
+   "id": 898,
+   "topic": "Open-source Sanskrit chant recognition",
+   "pick_tree_v1": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "AI/Fine-tuning & Training",
+     "India & Tamil Nadu"
+    ]
+   }
+  },
+  {
+   "id": 947,
+   "topic": "Subdomain discovery via certificate records",
+   "pick_tree_v1": {
+    "primary": "Software Engineering",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Software Engineering",
+    "others": []
+   }
+  },
+  {
+   "id": 935,
+   "topic": "Photo-to-riggable 3D model generation",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": [
+     "Coding with AI/Games & 3D"
+    ]
+   }
+  },
+  {
+   "id": 933,
+   "topic": "AI-powered networking and introductions",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 1003,
+   "topic": "AI-generated interactive 3D SUV model",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Coding with AI/Coding Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   }
+  },
+  {
+   "id": 1032,
+   "topic": "AI agent for Kaggle competitions",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "Coding with AI/Coding Agents",
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "Coding with AI/Coding Agents",
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 1030,
+   "topic": "AI wedding video prompting techniques",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": [
+     "Startups & Business/Ideas & Indie Hacking"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": [
+     "Startups & Business"
+    ]
+   }
+  },
+  {
+   "id": 1048,
+   "topic": "ESP32 controller for quadruped robots",
+   "pick_tree_v1": {
+    "primary": "Robotics & Hardware",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Robotics & Hardware",
+    "others": []
+   }
+  },
+  {
+   "id": 1184,
+   "topic": "Head-tracked Gaussian splat rendering",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   }
+  },
+  {
+   "id": 1282,
+   "topic": "Through-wall augmented reality tracking",
+   "pick_tree_v1": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "Robotics & Hardware"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Robotics & Hardware",
+    "others": [
+     "AI/Vision, Speech & Multimodal",
+     "Coding with AI/Games & 3D"
+    ]
+   }
+  },
+  {
+   "id": 1317,
+   "topic": "AI-built browser kart racing game",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": []
+   }
+  },
+  {
+   "id": 1332,
+   "topic": "Open-source Three.js RPG development skills",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Open Source Repos",
+     "Coding with AI/Coding Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Coding with AI/Coding Agents",
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 1424,
+   "topic": "Batched questions in AI workflows",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   }
+  },
+  {
+   "id": 1448,
+   "topic": "AI-generated single-take motorcycle chase",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": []
+   }
+  },
+  {
+   "id": 1468,
+   "topic": "Game engine-native AI scene building",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Coding with AI/Coding Agents"
+    ]
+   }
+  },
+  {
+   "id": 1500,
+   "topic": "AI-built mechanical typewriter simulator",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Coding with AI/Coding Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Coding with AI/Coding Agents"
+    ]
+   }
+  },
+  {
+   "id": 1497,
+   "topic": "Open-source 3D tree generator",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 1516,
+   "topic": "Recommended UI engineering skills",
+   "pick_tree_v1": {
+    "primary": "Design & Frontend",
+    "others": [
+     "Coding with AI/Coding Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": [
+     "Design & Frontend"
+    ]
+   }
+  },
+  {
+   "id": 1510,
+   "topic": "Framer mouse interaction testing",
+   "pick_tree_v1": {
+    "primary": "Design & Frontend",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Design & Frontend",
+    "others": []
+   }
+  },
+  {
+   "id": 1619,
+   "topic": "Meter-aware Sanskrit chant synthesis",
+   "pick_tree_v1": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "Open Source Repos",
+     "India & Tamil Nadu"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "Open Source Repos",
+     "India & Tamil Nadu"
+    ]
+   }
+  },
+  {
+   "id": 1791,
+   "topic": "Adaptive phonics practice app",
+   "pick_tree_v1": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "AI Products & Tools"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "AI/LLM App Frameworks"
+    ]
+   }
+  },
+  {
+   "id": 1867,
+   "topic": "Medical AI in Chinese hospitals",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": []
+   }
+  },
+  {
+   "id": 1951,
+   "topic": "Industrial land acquisition analytics platform",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": [
+     "Design & Frontend"
+    ]
+   }
+  },
+  {
+   "id": 1983,
+   "topic": "Indian classical music radio",
+   "pick_tree_v1": {
+    "primary": "Coding with AI",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   }
+  },
+  {
+   "id": 2012,
+   "topic": "AI simulation of US Congress",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "Coding with AI/Games & 3D"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "Coding with AI/Games & 3D"
+    ]
+   }
+  },
+  {
+   "id": 2033,
+   "topic": "Museum statue conversation app",
+   "pick_tree_v1": {
+    "primary": "AI Products & Tools",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI Products & Tools",
+    "others": []
+   }
+  },
+  {
+   "id": 2048,
+   "topic": "RinkRush hockey game launch",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": []
+   }
+  },
+  {
+   "id": 2042,
+   "topic": "unclear: Y Combinator business opportunity teaser",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/Ideas & Indie Hacking",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Startups & Business",
+    "others": []
+   }
+  },
+  {
+   "id": 2038,
+   "topic": "Offline macOS teleprompter with speech recognition",
+   "pick_tree_v1": {
+    "primary": "AI Products & Tools",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI Products & Tools",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   }
+  },
+  {
+   "id": 2079,
+   "topic": "AI agent workflows for engineering teams",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": [
+     "Software Engineering"
+    ]
+   }
+  },
+  {
+   "id": 2098,
+   "topic": "Financial services AI agent lessons",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": []
+   }
+  },
+  {
+   "id": 2148,
+   "topic": "Face-tracked off-axis shoe projection demo",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   }
+  },
+  {
+   "id": 2137,
+   "topic": "Photorealistic classroom whiteboard generation prompt",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": [
+     "AI/Prompting & Evals"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": [
+     "AI/Prompting & Evals"
+    ]
+   }
+  },
+  {
+   "id": 2191,
+   "topic": "Startup landing page design prompt",
+   "pick_tree_v1": {
+    "primary": "AI/Prompting & Evals",
+    "others": [
+     "Design & Frontend"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Prompting & Evals",
+    "others": [
+     "Design & Frontend"
+    ]
+   }
+  },
+  {
+   "id": 2188,
+   "topic": "AI coding agent content recommendations",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   }
+  },
+  {
+   "id": 2305,
+   "topic": "Semantic code search benchmarking",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": []
+   }
+  },
+  {
+   "id": 2304,
+   "topic": "Prefix caching for LLM inference",
+   "pick_tree_v1": {
+    "primary": "AI/Local Inference & GPUs",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Local Inference & GPUs",
+    "others": []
+   }
+  },
+  {
+   "id": 2334,
+   "topic": "Deep research agent with interleaved reasoning",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 2335,
+   "topic": "Local open-source semantic search",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "Open Source Repos",
+     "Coding with AI/Coding Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "Open Source Repos",
+     "Coding with AI/Coding Agents"
+    ]
+   }
+  },
+  {
+   "id": 2453,
+   "topic": "Stanford lecture on LLM training",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training"
+    ]
+   }
+  },
+  {
+   "id": 2447,
+   "topic": "Python MCP server tutorial",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 2479,
+   "topic": "Three years of Roboflow projects",
+   "pick_tree_v1": {
+    "primary": "Career",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Career",
+    "others": []
+   }
+  },
+  {
+   "id": 2476,
+   "topic": "unclear: empty post",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "none",
+    "others": []
+   }
+  },
+  {
+   "id": 2502,
+   "topic": "Language model attribution from outputs",
+   "pick_tree_v1": {
+    "primary": "AI/Research Papers",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Research Papers",
+    "others": []
+   }
+  },
+  {
+   "id": 2500,
+   "topic": "Karpathy’s end-to-end LLM tutorial",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training"
+    ]
+   }
+  },
+  {
+   "id": 2493,
+   "topic": "Argil Atom video model launch",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   }
+  },
+  {
+   "id": 2519,
+   "topic": "Cloud deployment for nanochat training",
+   "pick_tree_v1": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "Open Source Repos",
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "Open Source Repos",
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 2560,
+   "topic": "Favorite technical blogs",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Software Engineering",
+    "others": []
+   }
+  },
+  {
+   "id": 2577,
+   "topic": "Karpathy’s large language model overview",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training",
+     "AI/Agents"
+    ]
+   }
+  },
+  {
+   "id": 2576,
+   "topic": "Text-faithful AI illustrations of Vedic deities",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   }
+  },
+  {
+   "id": 2575,
+   "topic": "Searchable 3D Rigveda hymn galaxy",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": [
+     "Coding with AI/Games & 3D"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   }
+  },
+  {
+   "id": 2688,
+   "topic": "Recommended Codex CLI settings",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   }
+  },
+  {
+   "id": 2742,
+   "topic": "Hands-on AWS projects for beginners",
+   "pick_tree_v1": {
+    "primary": "Software Engineering",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Software Engineering",
+    "others": []
+   }
+  },
+  {
+   "id": 2739,
+   "topic": "Subtle interface animations in Lovable",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "Design & Frontend"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "Design & Frontend"
+    ]
+   }
+  },
+  {
+   "id": 2893,
+   "topic": "Graph-powered multimodal retrieval framework",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Vision, Speech & Multimodal",
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "Open Source Repos",
+     "AI/Vision, Speech & Multimodal"
+    ]
+   }
+  },
+  {
+   "id": 2928,
+   "topic": "unclear: commentary on hidden marital problems",
+   "pick_tree_v1": {
+    "primary": "Society & Politics",
+    "others": [
+     "Life & Productivity"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Society & Politics",
+    "others": [
+     "Life & Productivity"
+    ]
+   }
+  },
+  {
+   "id": 2981,
+   "topic": "Interactive guide to LLM embeddings",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 3089,
+   "topic": "App development from n8n workflows",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "AI Products & Tools"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "AI Products & Tools"
+    ]
+   }
+  },
+  {
+   "id": 3141,
+   "topic": "Claude Code versus Taskmaster AI",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": []
+   }
+  },
+  {
+   "id": 3139,
+   "topic": "Indian indie business payments and registration",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/Ideas & Indie Hacking",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Startups & Business",
+    "others": [
+     "India & Tamil Nadu"
+    ]
+   }
+  },
+  {
+   "id": 3152,
+   "topic": "AI tools for brand visuals",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": []
+   }
+  },
+  {
+   "id": 3267,
+   "topic": "Multi-vector embeddings for semantic search",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": []
+   }
+  },
+  {
+   "id": 3324,
+   "topic": "GPU programming YouTube channels",
+   "pick_tree_v1": {
+    "primary": "AI/Local Inference & GPUs",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Local Inference & GPUs",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 3342,
+   "topic": "AI agent development guide",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 3340,
+   "topic": "Free no-code AI video automation",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": [
+     "AI Products & Tools"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": [
+     "AI Products & Tools"
+    ]
+   }
+  },
+  {
+   "id": 3356,
+   "topic": "LlamaIndex multi-agent research workshop",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/LLM App Frameworks",
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 3394,
+   "topic": "App install cost reduction",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/Ideas & Indie Hacking",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Startups & Business",
+    "others": []
+   }
+  },
+  {
+   "id": 3489,
+   "topic": "Electronics and microcontroller programming guide",
+   "pick_tree_v1": {
+    "primary": "Robotics & Hardware",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Robotics & Hardware",
+    "others": []
+   }
+  },
+  {
+   "id": 3481,
+   "topic": "LLM reasoning and GRPO course",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training"
+    ]
+   }
+  },
+  {
+   "id": 3477,
+   "topic": "unclear: reflective caption with video link",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "none",
+    "others": []
+   }
+  },
+  {
+   "id": 3476,
+   "topic": "Multi-agent filmmaking hackathon win",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": [
+     "AI/Agents",
+     "Creative AI"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": [
+     "AI/Agents",
+     "Creative AI"
+    ]
+   }
+  },
+  {
+   "id": 3503,
+   "topic": "Blog post on LLM reasoning",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   }
+  },
+  {
+   "id": 3517,
+   "topic": "Chunkless vision RAG for PDFs",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   }
+  },
+  {
+   "id": 3642,
+   "topic": "Hackathon on LLM memory",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": [
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": [
+     "AI/Agents"
+    ]
+   }
+  },
+  {
+   "id": 3653,
+   "topic": "Book on scalable multimodal RAG",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 3680,
+   "topic": "Semantic search for LangGraph memory",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 3809,
+   "topic": "Disagreeableness in interesting people",
+   "pick_tree_v1": {
+    "primary": "Society & Politics",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Society & Politics",
+    "others": []
+   }
+  },
+  {
+   "id": 3831,
+   "topic": "unclear: reference to unspecified content",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "none",
+    "others": []
+   }
+  },
+  {
+   "id": 3869,
+   "topic": "Transgender debates in youth settings",
+   "pick_tree_v1": {
+    "primary": "Society & Politics",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Society & Politics",
+    "others": []
+   }
+  },
+  {
+   "id": 3865,
+   "topic": "Decline of married parent households",
+   "pick_tree_v1": {
+    "primary": "Society & Politics",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Society & Politics",
+    "others": []
+   }
+  },
+  {
+   "id": 3903,
+   "topic": "Text to 3D generation",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": [
+     "AI Products & Tools",
+     "Coding with AI/Games & 3D"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Games & 3D",
+    "others": [
+     "Creative AI",
+     "AI Products & Tools"
+    ]
+   }
+  },
+  {
+   "id": 3975,
+   "topic": "AI fashion product photoshoots",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": []
+   }
+  },
+  {
+   "id": 4106,
+   "topic": "ComfyUI installation with Claude",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": [
+     "AI/Local Inference & GPUs"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Coding Agents",
+    "others": [
+     "Creative AI"
+    ]
+   }
+  },
+  {
+   "id": 4097,
+   "topic": "Multiagent customer service concierge",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/LLM App Frameworks",
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 4109,
+   "topic": "unclear: reminder from Karpathy",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "none",
+    "others": []
+   }
+  },
+  {
+   "id": 4189,
+   "topic": "Bolt.new open source repository",
+   "pick_tree_v1": {
+    "primary": "Open Source Repos",
+    "others": [
+     "Coding with AI/Cursor & AI IDEs"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 4183,
+   "topic": "Prompt based enterprise app creation",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Startups & Business",
+    "others": [
+     "Coding with AI/Cursor & AI IDEs"
+    ]
+   }
+  },
+  {
+   "id": 4202,
+   "topic": "AI agent development services",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI Products & Tools"
+    ]
+   }
+  },
+  {
+   "id": 4234,
+   "topic": "Multimodal RAG with contextual retrieval",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Vision, Speech & Multimodal",
+     "AI/LLM App Frameworks"
+    ]
+   }
+  },
+  {
+   "id": 4485,
+   "topic": "AI agent market map",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": []
+   }
+  },
+  {
+   "id": 4494,
+   "topic": "unclear: expression of excitement",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "none",
+    "others": []
+   }
+  },
+  {
+   "id": 4552,
+   "topic": "MotleyCrew multi-agent orchestration framework",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 4593,
+   "topic": "Stanford lecture on building LLMs",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   }
+  },
+  {
+   "id": 4600,
+   "topic": "Frontend generation with Cursor and v0",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "Design & Frontend"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "Design & Frontend",
+     "AI/Prompting & Evals"
+    ]
+   }
+  },
+  {
+   "id": 4767,
+   "topic": "Cursor multi-monitor setup workaround",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": []
+   }
+  },
+  {
+   "id": 4808,
+   "topic": "Dotai template for Cursor projects",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": []
+   }
+  },
+  {
+   "id": 4834,
+   "topic": "Cursor-built web scraping RAG agent",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "AI/Agents",
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "AI/Agents",
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 4868,
+   "topic": "Qwen2-VL visual understanding capabilities",
+   "pick_tree_v1": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   }
+  },
+  {
+   "id": 4851,
+   "topic": "Verba’s open-source RAG architecture",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 4924,
+   "topic": "Corrective RAG ensembles for finance",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/RAG & Search",
+     "AI/LLM App Frameworks"
+    ]
+   }
+  },
+  {
+   "id": 4921,
+   "topic": "Machine learning fundamentals with MiniTorch",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   }
+  },
+  {
+   "id": 4991,
+   "topic": "UI design with Cursor and v0",
+   "pick_tree_v1": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "Design & Frontend"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI/Cursor & AI IDEs",
+    "others": [
+     "Design & Frontend"
+    ]
+   }
+  },
+  {
+   "id": 4979,
+   "topic": "RAG and AI agent research",
+   "pick_tree_v1": {
+    "primary": "AI/Research Papers",
+    "others": [
+     "AI/RAG & Search",
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Research Papers",
+    "others": [
+     "AI/Agents",
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 5034,
+   "topic": "Character AI’s popularity and Google partnership",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": [
+     "AI Products & Tools"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": [
+     "AI Products & Tools",
+     "Startups & Business"
+    ]
+   }
+  },
+  {
+   "id": 5040,
+   "topic": "GPU memory requirements for LLMs",
+   "pick_tree_v1": {
+    "primary": "AI/Local Inference & GPUs",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Local Inference & GPUs",
+    "others": []
+   }
+  },
+  {
+   "id": 5079,
+   "topic": "Advanced RAG techniques repository",
+   "pick_tree_v1": {
+    "primary": "Open Source Repos",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Open Source Repos",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 5115,
+   "topic": "Daily AI funding newsletter",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": []
+   }
+  },
+  {
+   "id": 5197,
+   "topic": "Free Applied LLMs course resources",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   }
+  },
+  {
+   "id": 5269,
+   "topic": "Local tool calling with Ollama",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Local Inference & GPUs"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Local Inference & GPUs"
+    ]
+   }
+  },
+  {
+   "id": 5261,
+   "topic": "AI agent hackathon finalists",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": [
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": [
+     "AI/Agents"
+    ]
+   }
+  },
+  {
+   "id": 5307,
+   "topic": "First video creation tutorial",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "none",
+    "others": []
+   }
+  },
+  {
+   "id": 5294,
+   "topic": "Keynote on future knowledge assistants",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": []
+   }
+  },
+  {
+   "id": 5375,
+   "topic": "Criticism of stand-up comedy",
+   "pick_tree_v1": {
+    "primary": "Humor & Reactions",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Humor & Entertainment",
+    "others": []
+   }
+  },
+  {
+   "id": 5370,
+   "topic": "Property graph basics for GraphRAG",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 5409,
+   "topic": "Cover-Agent GitHub popularity milestones",
+   "pick_tree_v1": {
+    "primary": "Open Source Repos",
+    "others": [
+     "Coding with AI/Coding Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Open Source Repos",
+    "others": [
+     "Coding with AI/Coding Agents"
+    ]
+   }
+  },
+  {
+   "id": 5436,
+   "topic": "Vadakalai–Thenkalai temple dispute resolution",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   }
+  },
+  {
+   "id": 5473,
+   "topic": "Street safety and municipal oversight",
+   "pick_tree_v1": {
+    "primary": "Dog menace",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Dog menace",
+    "others": []
+   }
+  },
+  {
+   "id": 5562,
+   "topic": "Llama Agents release and tutorial",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 5652,
+   "topic": "Open source audio note generation",
+   "pick_tree_v1": {
+    "primary": "AI Products & Tools",
+    "others": [
+     "AI/Vision, Speech & Multimodal",
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": [
+     "AI/LLM App Frameworks",
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 5642,
+   "topic": "China and India GDP comparison",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": [
+     "Investing & Finance"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "India & Tamil Nadu",
+    "others": [
+     "Investing & Finance"
+    ]
+   }
+  },
+  {
+   "id": 5712,
+   "topic": "Local Llama 3 travel agent",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Local Inference & GPUs"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Local Inference & GPUs",
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 5706,
+   "topic": "Startup customer acquisition lessons",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/Ideas & Indie Hacking",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Startups & Business",
+    "others": []
+   }
+  },
+  {
+   "id": 5760,
+   "topic": "Guide to fictional artificial intelligences",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Humor & Entertainment",
+    "others": []
+   }
+  },
+  {
+   "id": 5756,
+   "topic": "Advanced knowledge graph RAG workshop",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Courses & Explainers",
+     "AI/Agents"
+    ]
+   }
+  },
+  {
+   "id": 5747,
+   "topic": "PDF table extraction and summarization",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Local Inference & GPUs"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Local Inference & GPUs",
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 5772,
+   "topic": "Automated meeting summarization tutorial",
+   "pick_tree_v1": {
+    "primary": "AI Products & Tools",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Life & Productivity",
+    "others": []
+   }
+  },
+  {
+   "id": 5810,
+   "topic": "Book on building LLM applications",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/LLM App Frameworks"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/LLM App Frameworks"
+    ]
+   }
+  },
+  {
+   "id": 5835,
+   "topic": "Lessons from building with LLMs",
+   "pick_tree_v1": {
+    "primary": "AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/LLM App Frameworks",
+    "others": []
+   }
+  },
+  {
+   "id": 5870,
+   "topic": "Practical advice for building with LLMs",
+   "pick_tree_v1": {
+    "primary": "AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/LLM App Frameworks"
+    ]
+   }
+  },
+  {
+   "id": 5904,
+   "topic": "Llama 3 implementation from scratch",
+   "pick_tree_v1": {
+    "primary": "Open Source Repos",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Open Source Repos",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 5995,
+   "topic": "Llama 3 use case cookbooks",
+   "pick_tree_v1": {
+    "primary": "AI/LLM App Frameworks",
+    "others": [
+     "AI/Local Inference & GPUs",
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/LLM App Frameworks",
+    "others": [
+     "AI/Courses & Explainers",
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 6064,
+   "topic": "AI financial analyst project",
+   "pick_tree_v1": {
+    "primary": "AI/LLM App Frameworks",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/LLM App Frameworks",
+    "others": []
+   }
+  },
+  {
+   "id": 6075,
+   "topic": "Learning strategies for teens",
+   "pick_tree_v1": {
+    "primary": "Life & Productivity",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Life & Productivity",
+    "others": []
+   }
+  },
+  {
+   "id": 6073,
+   "topic": "AI agent automation workshop",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 6103,
+   "topic": "unclear: bedtime joke setup",
+   "pick_tree_v1": {
+    "primary": "Humor & Reactions",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Humor & Entertainment",
+    "others": []
+   }
+  },
+  {
+   "id": 6128,
+   "topic": "Planning in AI agent workflows",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   }
+  },
+  {
+   "id": 6119,
+   "topic": "LLM fine-tuning course speakers",
+   "pick_tree_v1": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "AI/Courses & Explainers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training"
+    ]
+   }
+  },
+  {
+   "id": 6130,
+   "topic": "DSPy function calling and agents",
+   "pick_tree_v1": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/LLM App Frameworks"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Agents",
+    "others": [
+     "AI/LLM App Frameworks"
+    ]
+   }
+  },
+  {
+   "id": 6255,
+   "topic": "AI Grant’s second company cohort",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": [
+     "Startups & Business"
+    ]
+   }
+  },
+  {
+   "id": 6270,
+   "topic": "Language models for regression",
+   "pick_tree_v1": {
+    "primary": "Open Source Repos",
+    "others": [
+     "AI/Prompting & Evals"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Open Source Repos",
+    "others": [
+     "AI/Models & Releases"
+    ]
+   }
+  },
+  {
+   "id": 6265,
+   "topic": "unclear: praise for Annamalai’s speech",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   }
+  },
+  {
+   "id": 6284,
+   "topic": "AI Oracle Colab notebook",
+   "pick_tree_v1": {
+    "primary": "AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI",
+    "others": []
+   }
+  },
+  {
+   "id": 6394,
+   "topic": "Open-source AI sales outreach agent",
+   "pick_tree_v1": {
+    "primary": "Open Source Repos",
+    "others": [
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Open Source Repos",
+    "others": [
+     "AI/Agents"
+    ]
+   }
+  },
+  {
+   "id": 6419,
+   "topic": "Tech industry tracking with X Pro",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "none",
+    "others": []
+   }
+  },
+  {
+   "id": 6404,
+   "topic": "Cognitive architectures for language agents",
+   "pick_tree_v1": {
+    "primary": "AI/Research Papers",
+    "others": [
+     "AI/Agents"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Research Papers",
+    "others": [
+     "AI/Agents"
+    ]
+   }
+  },
+  {
+   "id": 6436,
+   "topic": "Claude Opus and Haiku comparison",
+   "pick_tree_v1": {
+    "primary": "AI/Models & Releases",
+    "others": [
+     "AI/Prompting & Evals"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Models & Releases",
+    "others": [
+     "AI/Prompting & Evals",
+     "AI/LLM App Frameworks"
+    ]
+   }
+  },
+  {
+   "id": 6425,
+   "topic": "Mistral’s open-source LLM hackathon",
+   "pick_tree_v1": {
+    "primary": "Startups & Business/AI Industry & Events",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Industry News & Events",
+    "others": []
+   }
+  },
+  {
+   "id": 6491,
+   "topic": "Potential next Magnificent Seven stocks",
+   "pick_tree_v1": {
+    "primary": "Investing & Finance",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Investing & Finance",
+    "others": []
+   }
+  },
+  {
+   "id": 6485,
+   "topic": "Grok model size and architecture",
+   "pick_tree_v1": {
+    "primary": "AI/Models & Releases",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Models & Releases",
+    "others": []
+   }
+  },
+  {
+   "id": 6558,
+   "topic": "Advanced RAG development course",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Courses & Explainers",
+     "AI/Prompting & Evals"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 6607,
+   "topic": "LEAPS versus stock ownership",
+   "pick_tree_v1": {
+    "primary": "Investing & Finance",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Investing & Finance",
+    "others": []
+   }
+  },
+  {
+   "id": 6601,
+   "topic": "NavaRasa multilingual Indic Gemma models",
+   "pick_tree_v1": {
+    "primary": "AI/Models & Releases",
+    "others": [
+     "AI/Fine-tuning & Training",
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Models & Releases",
+    "others": [
+     "AI/Fine-tuning & Training",
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 6655,
+   "topic": "AI virtual clothing try-ons",
+   "pick_tree_v1": {
+    "primary": "AI Products & Tools",
+    "others": [
+     "Creative AI"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI Products & Tools",
+    "others": [
+     "Creative AI"
+    ]
+   }
+  },
+  {
+   "id": 6679,
+   "topic": "AI, consciousness, and humanity's future",
+   "pick_tree_v1": {
+    "primary": "AI",
+    "others": [
+     "Society & Politics"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI",
+    "others": [
+     "Society & Politics"
+    ]
+   }
+  },
+  {
+   "id": 6687,
+   "topic": "Open-source personal document search agent",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI Products & Tools"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "Open Source Repos",
+     "AI Products & Tools"
+    ]
+   }
+  },
+  {
+   "id": 6729,
+   "topic": "Hands-on NLP course with PyTorch",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": []
+   }
+  },
+  {
+   "id": 6745,
+   "topic": "AI-assisted trailer production",
+   "pick_tree_v1": {
+    "primary": "Creative AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Creative AI",
+    "others": [
+     "AI/Vision, Speech & Multimodal"
+    ]
+   }
+  },
+  {
+   "id": 6790,
+   "topic": "Recommended fundamental stock analysts",
+   "pick_tree_v1": {
+    "primary": "Investing & Finance",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Investing & Finance",
+    "others": []
+   }
+  },
+  {
+   "id": 6831,
+   "topic": "LLM hype and value",
+   "pick_tree_v1": {
+    "primary": "AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI",
+    "others": []
+   }
+  },
+  {
+   "id": 6829,
+   "topic": "unclear: a question contrasting sex workers and partygoers",
+   "pick_tree_v1": {
+    "primary": "none",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "none",
+    "others": []
+   }
+  },
+  {
+   "id": 6876,
+   "topic": "StreamRAG video search agent",
+   "pick_tree_v1": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Vision, Speech & Multimodal",
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/RAG & Search",
+    "others": [
+     "AI/Vision, Speech & Multimodal",
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 6894,
+   "topic": "EB-5 green card resources",
+   "pick_tree_v1": {
+    "primary": "Career/Immigration & Visas",
+    "others": [
+     "Lawyers"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "Career/Immigration & Visas",
+    "others": [
+     "Lawyers"
+    ]
+   }
+  },
+  {
+   "id": 7057,
+   "topic": "Crypto mining stock losses",
+   "pick_tree_v1": {
+    "primary": "Investing & Finance",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Investing & Finance",
+    "others": []
+   }
+  },
+  {
+   "id": 7160,
+   "topic": "Advances in multimodal AI",
+   "pick_tree_v1": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Vision, Speech & Multimodal",
+    "others": []
+   }
+  },
+  {
+   "id": 7193,
+   "topic": "Access to Indian corporate filings",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   }
+  },
+  {
+   "id": 7183,
+   "topic": "Joke about failing bed support",
+   "pick_tree_v1": {
+    "primary": "Humor & Reactions",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Humor & Entertainment",
+    "others": []
+   }
+  },
+  {
+   "id": 7206,
+   "topic": "Introduction to text embeddings",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/Fine-tuning & Training"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/RAG & Search",
+     "AI/Fine-tuning & Training"
+    ]
+   }
+  },
+  {
+   "id": 7309,
+   "topic": "LlamaIndex and Gradient fine-tuning guides",
+   "pick_tree_v1": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "AI/LLM App Frameworks",
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "AI/LLM App Frameworks",
+     "AI/RAG & Search"
+    ]
+   }
+  },
+  {
+   "id": 7372,
+   "topic": "Rajavel’s commentary on Tamil Nadu BJP",
+   "pick_tree_v1": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "India & Tamil Nadu",
+    "others": []
+   }
+  },
+  {
+   "id": 7417,
+   "topic": "Parental rights and school confidentiality",
+   "pick_tree_v1": {
+    "primary": "Society & Politics",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Society & Politics",
+    "others": []
+   }
+  },
+  {
+   "id": 7508,
+   "topic": "spaCy and LangChain integration",
+   "pick_tree_v1": {
+    "primary": "AI/LLM App Frameworks",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "AI/LLM App Frameworks",
+    "others": []
+   }
+  },
+  {
+   "id": 7557,
+   "topic": "Eighth-grade parent-teacher night",
+   "pick_tree_v1": {
+    "primary": "Society & Politics",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Society & Politics",
+    "others": []
+   }
+  },
+  {
+   "id": 7614,
+   "topic": "Open-source task-specific LLM training",
+   "pick_tree_v1": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "Open Source Repos"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Fine-tuning & Training",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 7650,
+   "topic": "Free LangChain course",
+   "pick_tree_v1": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/LLM App Frameworks"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/Courses & Explainers",
+    "others": [
+     "AI/LLM App Frameworks"
+    ]
+   }
+  },
+  {
+   "id": 7647,
+   "topic": "H-1B barriers for international graduates",
+   "pick_tree_v1": {
+    "primary": "Career/Immigration & Visas",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Career/Immigration & Visas",
+    "others": []
+   }
+  },
+  {
+   "id": 7682,
+   "topic": "Cohere recruitment for NLP roles",
+   "pick_tree_v1": {
+    "primary": "Career",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Career",
+    "others": []
+   }
+  },
+  {
+   "id": 7724,
+   "topic": "Natural-language queries for Garmin files",
+   "pick_tree_v1": {
+    "primary": "AI/LLM App Frameworks",
+    "others": [
+     "AI/RAG & Search"
+    ]
+   },
+   "pick_tree_v2": {
+    "primary": "AI/LLM App Frameworks",
+    "others": [
+     "Open Source Repos"
+    ]
+   }
+  },
+  {
+   "id": 7741,
+   "topic": "AI-assisted programming language learning",
+   "pick_tree_v1": {
+    "primary": "Coding with AI",
+    "others": []
+   },
+   "pick_tree_v2": {
+    "primary": "Coding with AI",
+    "others": []
+   }
+  }
+ ]
+}

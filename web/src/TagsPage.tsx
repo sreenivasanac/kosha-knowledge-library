@@ -1,13 +1,15 @@
 /** Tag management (tree, rename, describe, move, merge, colour, delete) and the Proposed tags review. */
-import { useQuery } from '@tanstack/react-query';
-import { Check, Menu, X } from 'lucide-react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { Check, ChevronLeft, ChevronRight, Menu, X } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { focusItem, setPageHandlers } from './actions';
 import { api, flattenTags, invalidateLibrary, tagsQuery, type FlatTag, type ItemPage, type TagNode } from './api';
-import { TAG_COLORS } from './constants';
+import { DOUBTFUL_BELOW, TAG_COLORS } from './constants';
+import { shortDate } from './format';
+import { AgentBadge } from './ItemCard';
 import { goQuery } from './nav';
 import { quoteValue } from './query';
-import { openOverlay, setState, toast, toastError, useStore } from './store';
+import { getState, openOverlay, setState, toast, toastError, useStore } from './store';
 import { ErrorNote, Keys, useBindings } from './ui';
 
 export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
@@ -37,10 +39,6 @@ async function change(work: () => Promise<unknown>, done: string) {
 function TagEditor({ tag, all }: { tag: FlatTag; all: FlatTag[] }) {
   const [name, setName] = useState(tag.node.name);
   const [description, setDescription] = useState(tag.node.description ?? '');
-  useEffect(() => {
-    setName(tag.node.name);
-    setDescription(tag.node.description ?? '');
-  }, [tag.id, tag.node.name, tag.node.description]);
   // A tag cannot move under itself or its own descendants, nor merge into itself.
   const outside = all.filter((t) => t.id !== tag.id && !t.path.startsWith(tag.path + '/'));
   const patch = (body: Record<string, unknown>, done: string) => change(() => api(`/api/tags/${tag.id}`, { method: 'PATCH', body }), done);
@@ -193,91 +191,252 @@ export function TagsPage() {
               ))}
             </ul>
           </div>
-          {tag ? <TagEditor tag={tag} all={all} /> : <p className="rounded-lg border border-dashed border-line px-6 py-10 text-center text-sm text-ink-2">Choose a tag to rename, describe, move, merge, colour or delete it.</p>}
+          {tag ? <TagEditor key={`${tag.id}:${tag.node.name}:${tag.node.description ?? ''}`} tag={tag} all={all} /> : <p className="rounded-lg border border-dashed border-line px-6 py-10 text-center text-sm text-ink-2">Choose a tag to rename, describe, move, merge, colour or delete it.</p>}
         </div>
       )}
     </div>
   );
 }
 
-/** Proposed tags, one per row with its count and a few sample items; `a` approves, `r` rejects, j/k move. */
+/** The part of the tree under review: proposed tags, plus the approved tags above them as context. */
+function reviewTree(nodes: TagNode[]): TagNode[] {
+  return nodes.flatMap((n) => {
+    const children = reviewTree(n.children);
+    return n.status === 'proposed' || children.length ? [{ ...n, children }] : [];
+  });
+}
+const proposedIn = (t: FlatTag): FlatTag[] => flattenTags([t.node], t.path.includes('/') ? t.path.slice(0, t.path.lastIndexOf('/') + 1) : '').filter((d) => d.node.status === 'proposed');
+
+const SAMPLE_PAGE_SIZE = 25;
+
+/** Items carrying the focused tag, a page at a time, each with the confidence the agent gave it. */
+function Samples({ tag, doubtful, page, setPage }: { tag: FlatTag; doubtful: boolean; page: number; setPage: (p: number) => void }) {
+  const q = `#${quoteValue(tag.path)}${doubtful ? ` conf:<${DOUBTFUL_BELOW}` : ''}`;
+  const samples = useQuery({ queryKey: ['items', 'review', q, page], queryFn: () => api<ItemPage>(`/api/items?${new URLSearchParams({ q, page: String(page), page_size: String(SAMPLE_PAGE_SIZE) })}`), placeholderData: keepPreviousData });
+  const [open, setOpen] = useState<number | null>(null);
+  const data = samples.data;
+  // `]` can step past the end; come back to the last page there is.
+  const lastPage = data ? Math.max(1, data.pages) : null;
+  useEffect(() => {
+    if (lastPage != null && page > lastPage) setPage(lastPage);
+    // `setPage` is a new function each render; the page numbers are what matter.
+  }, [lastPage, page]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div>
+      <div className="flex items-center gap-2 border-b border-line px-4 py-1.5 text-sm text-ink-2">
+        <span className="flex-1 tabular-nums" aria-live="polite">
+          {data ? `${data.total.toLocaleString()} ${doubtful ? `doubtful item${data.total === 1 ? '' : 's'} (confidence below ${DOUBTFUL_BELOW})` : `item${data.total === 1 ? '' : 's'}`}` : ' '}
+        </span>
+        {data && data.pages > 1 && (
+          <>
+            <button className="btn h-7 px-1.5" aria-label="Previous samples" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              <ChevronLeft size={14} />
+            </button>
+            <span className="tabular-nums">
+              {page} / {data.pages}
+            </span>
+            <button className="btn h-7 px-1.5" aria-label="More samples" disabled={page >= data.pages} onClick={() => setPage(page + 1)}>
+              <ChevronRight size={14} />
+            </button>
+          </>
+        )}
+      </div>
+      {samples.error ? (
+        <div className="p-3">
+          <ErrorNote error={samples.error} retry={() => void samples.refetch()} />
+        </div>
+      ) : !data ? (
+        <div className="skeleton m-3 h-40" aria-busy="true" />
+      ) : data.items.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-ink-2">{doubtful ? 'No doubtful items: every item here was attached with high confidence, or by hand.' : 'No items carry this tag yet.'}</p>
+      ) : (
+        <ul aria-label="Sample items" className={samples.isPlaceholderData ? 'opacity-60' : ''}>
+          {data.items.map((i) => {
+            const own = i.tags.find((t) => t.tag_id === tag.id);
+            return (
+              <li key={i.id} className="border-b border-line last:border-b-0">
+                {/* A click opens the whole text in place; the reader is one more click away. */}
+                <button className="block w-full px-4 py-2 text-left hover:bg-sunken/60" aria-expanded={open === i.id} onClick={() => setOpen(open === i.id ? null : i.id)}>
+                  <span className="flex items-center gap-2 text-sm">
+                    <span className="truncate font-medium">{i.author.name ?? i.author.handle ?? 'Unknown author'}</span>
+                    <span className="shrink-0 text-ink-3">{shortDate(i.posted_at)}</span>
+                    <span className="flex-1" />
+                    {own && own.attached_by !== 'human' && own.attached_by !== 'import' ? <AgentBadge confidence={own.confidence} /> : own ? <span className="text-xs text-ink-3">by hand</span> : null}
+                  </span>
+                  {/* Closed: two lines of running text (blank lines would waste them). Open: the text as written. */}
+                  <span className={`mt-0.5 break-words text-sm text-ink-2 ${open === i.id ? 'block whitespace-pre-wrap' : 'line-clamp-2'}`}>{open === i.id ? `${i.title ? `${i.title}\n` : ''}${i.body ?? i.summary ?? ''}` : `${i.title ?? ''} ${i.body ?? i.summary ?? ''}`.replace(/\s+/g, ' ').trim()}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Proposed tags review. Left: the proposed tree with counts and definitions,
+ * walked with j/k. Right: the focused tag, its samples and the decisions.
+ * `a` / `r` decide one tag, Shift+A / Shift+X a whole subtree.
+ */
 export function ProposedPage() {
-  // Always asked again on opening: proposals come from organising runs outside this app.
-  const query = useQuery({ queryKey: ['proposed'], queryFn: () => api<TagNode[]>('/api/tags?status=proposed'), staleTime: 0 });
-  const proposed = flattenTags(query.data ?? []).filter((t) => t.node.status === 'proposed');
+  // Asked again on opening: proposals come from organising runs outside this app.
+  const query = useQuery({ ...tagsQuery, staleTime: 0 });
+  const rows = flattenTags(reviewTree(query.data ?? []));
+  const proposedCount = rows.filter((t) => t.node.status === 'proposed').length;
   const focusId = useStore((s) => s.focusId);
   const bindings = useBindings();
-  const ids = proposed.map((t) => t.id).join(',');
-  const focused = proposed.find((t) => t.id === focusId);
-  const samples = useQuery({ queryKey: ['items', 'sample', focused?.id], queryFn: () => api<ItemPage>(`/api/items?tag_id=${focused!.id}&page_size=25`), enabled: !!focused });
+  const ids = rows.map((t) => t.id).join(',');
+  const focused = rows.find((t) => t.id === focusId);
+  const [doubtful, setDoubtful] = useState(false);
+  // The sample page belongs to one tag and filter; another tag starts at page 1 again.
+  const pageKey = `${focusId}:${doubtful}`;
+  const [paging, setPaging] = useState({ key: pageKey, page: 1 });
+  const page = paging.key === pageKey ? paging.page : 1;
+  const setPage = (p: number) => setPaging({ key: pageKey, page: p });
 
   // The same j/k as the library walk these rows.
   useEffect(() => {
     const list = ids ? ids.split(',').map(Number) : [];
-    setState({ pageIds: list, pageItems: new Map(), total: list.length, focusId: list.includes(focusId ?? -1) ? focusId : (list[0] ?? null) });
+    const current = getState().focusId;
+    setState({ pageIds: list, pageItems: new Map(), total: list.length, focusId: list.includes(current ?? -1) ? current : (list[0] ?? null) });
   }, [ids]);
   useEffect(() => () => setState({ pageIds: [], focusId: null, total: 0 }), []);
 
+  /** Moves the ribbon off rows that are about to leave the tree. */
+  function focusAfter(leaving: Set<number>) {
+    const at = rows.findIndex((t) => t.id === focusId);
+    const next = rows.slice(at + 1).find((t) => !leaving.has(t.id)) ?? rows.slice(0, Math.max(at, 0)).reverse().find((t) => !leaving.has(t.id));
+    focusItem(next?.id ?? null);
+  }
   function decide(verb: 'approve' | 'reject', tag: FlatTag | undefined) {
     if (!tag) return;
-    const at = proposed.indexOf(tag);
-    focusItem((proposed[at + 1] ?? proposed[at - 1])?.id ?? null);
+    if (tag.node.status !== 'proposed') return toast(`#${tag.path} is already approved. Use “all under” to decide the proposed tags beneath it.`);
+    // An approved tag with proposed children stays in the tree as their context.
+    if (verb === 'reject' || !tag.node.children.length) focusAfter(new Set(flattenTags([tag.node]).map((t) => t.id)));
     void change(() => api(`/api/tags/${tag.id}/${verb}`, { method: 'POST' }), `${verb === 'approve' ? 'Approved' : 'Rejected'} #${tag.path}`);
+  }
+  /** One confirmation for the whole subtree, however many tags and items it holds. */
+  function decideTree(verb: 'approve' | 'reject', tag: FlatTag | undefined) {
+    if (!tag) return;
+    const targets = proposedIn(tag);
+    if (!targets.length) return;
+    if (targets.length === 1) return decide(verb, targets[0]);
+    openOverlay({
+      kind: 'confirm',
+      danger: verb === 'reject',
+      title: `${verb === 'approve' ? 'Approve' : 'Reject'} ${targets.length} proposed tags under #${tag.path}?`,
+      body: `${verb === 'approve' ? 'They become part of your tag tree' : 'They are marked rejected, so they are not proposed again'}: ${targets.slice(0, 6).map((t) => t.node.name).join(', ')}${targets.length > 6 ? ` and ${targets.length - 6} more` : ''}. Together they are on ${tag.node.count.toLocaleString()} items.`,
+      action: `${verb === 'approve' ? 'Approve' : 'Reject'} ${targets.length} tags`,
+      run: () => {
+        focusAfter(new Set(flattenTags([tag.node]).map((t) => t.id)));
+        return change(async () => {
+          // ponytail: one request per tag; add a subtree endpoint if trees reach hundreds of proposed tags.
+          for (const t of targets) await api(`/api/tags/${t.id}/${verb}`, { method: 'POST' });
+        }, `${verb === 'approve' ? 'Approved' : 'Rejected'} ${targets.length} tags under #${tag.path}`);
+      },
+    });
   }
   // Re-registered every render so the keys always act on the row focused now.
   useEffect(() => {
-    setPageHandlers({ 'proposed.approve': () => decide('approve', focused), 'proposed.reject': () => decide('reject', focused) });
+    setPageHandlers({
+      'proposed.approve': () => decide('approve', focused),
+      'proposed.reject': () => decide('reject', focused),
+      'proposed.approveTree': () => decideTree('approve', focused),
+      'proposed.rejectTree': () => decideTree('reject', focused),
+      'proposed.doubtful': () => setDoubtful((d) => !d),
+      'page.next': () => setPage(page + 1),
+      'page.prev': () => setPage(Math.max(1, page - 1)),
+    });
     return () => setPageHandlers({});
   });
 
+  const under = focused ? proposedIn(focused).length : 0;
   return (
     <div className="px-3 py-4 sm:px-5">
-      <PageHeader title="Proposed tags" />
-      <p className="mb-4 max-w-2xl text-sm text-ink-2">
-        Tags an organising run suggested. Approving makes a tag part of your tree; rejecting keeps a record so it is not proposed again. <Keys keys={bindings['move.next']} /> <Keys keys={bindings['move.prev']} /> to move, <Keys keys={bindings['proposed.approve']} /> to approve, <Keys keys={bindings['proposed.reject']} /> to reject.
+      <PageHeader title="Proposed tags">
+        {proposedCount > 0 && <span className="text-sm tabular-nums text-ink-2">{proposedCount.toLocaleString()} to review</span>}
+      </PageHeader>
+      <p className="mb-4 max-w-3xl text-sm text-ink-2">
+        Tags an organising run suggested, with the items it put under each. <Keys keys={bindings['move.next']} /> <Keys keys={bindings['move.prev']} /> move, <Keys keys={bindings['proposed.approve']} /> approves, <Keys keys={bindings['proposed.reject']} /> rejects, <Keys keys={bindings['proposed.approveTree']} /> / <Keys keys={bindings['proposed.rejectTree']} /> decide a tag with everything under it, <Keys keys={bindings['proposed.doubtful']} /> shows only doubtful items, <Keys keys={bindings['page.prev']} /> <Keys keys={bindings['page.next']} /> page the samples.
       </p>
       {query.isPending ? (
         <div className="skeleton h-48 max-w-2xl" aria-busy="true" />
       ) : query.error ? (
         <ErrorNote error={query.error} retry={() => void query.refetch()} />
-      ) : proposed.length === 0 ? (
+      ) : rows.length === 0 ? (
         <p className="max-w-2xl rounded-lg border border-dashed border-line px-6 py-10 text-center text-sm text-ink-2">Nothing to review. Proposed tags appear here after an organising run.</p>
       ) : (
-        <ul className="max-w-2xl overflow-hidden rounded-lg border border-line bg-surface">
-          {proposed.map((t) => {
-            const on = t.id === focusId;
-            return (
-              <li key={t.id} data-focus-id={t.id} aria-current={on || undefined} onClick={() => setState({ focusId: t.id })} className={`scroll-my-24 border-b border-line px-4 py-3 last:border-b-0 ${on ? 'focused' : ''}`}>
-                <div className="flex items-center gap-3">
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+          <ul aria-label="Proposed tag tree" data-own-scroll className="overflow-y-auto rounded-lg border border-line bg-surface lg:sticky lg:top-4 lg:max-h-[calc(100dvh-11rem)]">
+            {rows.map((t) => {
+              const on = t.id === focusId;
+              const proposed = t.node.status === 'proposed';
+              return (
+                <li key={t.id} data-focus-id={t.id} aria-current={on || undefined} onClick={() => setState({ focusId: t.id })} className={`group flex cursor-pointer items-center gap-2 border-b border-line py-1.5 pr-2 last:border-b-0 ${on ? 'focused' : 'hover:bg-sunken/60'}`} style={{ paddingLeft: 12 + t.depth * 16 }}>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-semibold italic">{t.path.split('/').join(' › ')}</span>
-                    {t.node.description && <span className="block text-sm text-ink-2">{t.node.description}</span>}
+                    <span className={`block truncate text-sm ${proposed ? 'font-semibold italic' : 'text-ink-3'}`}>
+                      {t.node.name}
+                      {!proposed && <span className="ml-1.5 text-xs not-italic">approved</span>}
+                    </span>
+                    {t.node.description && <span className="block truncate text-xs text-ink-3">{t.node.description}</span>}
                   </span>
-                  <span className="shrink-0 text-sm tabular-nums text-ink-3">
-                    {t.node.count.toLocaleString()} item{t.node.count === 1 ? '' : 's'}
-                  </span>
-                  <button className="btn h-8 px-2" aria-label={`Approve ${t.path}`} onClick={(e) => (e.stopPropagation(), decide('approve', t))}>
-                    <Check size={15} className="text-ok" /> Approve
+                  <span className="shrink-0 text-xs tabular-nums text-ink-3">{t.node.count.toLocaleString()}</span>
+                  {proposed && (
+                    <span className={`flex shrink-0 ${on ? '' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
+                      <button className="grid h-6 w-6 place-items-center rounded hover:bg-sunken" aria-label={`Approve ${t.path}`} onClick={(e) => (e.stopPropagation(), decide('approve', t))}>
+                        <Check size={14} className="text-ok" />
+                      </button>
+                      <button className="grid h-6 w-6 place-items-center rounded hover:bg-sunken" aria-label={`Reject ${t.path}`} onClick={(e) => (e.stopPropagation(), decide('reject', t))}>
+                        <X size={14} className="text-danger" />
+                      </button>
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
+          {focused && (
+            <section aria-label={`Review ${focused.path}`} className="overflow-hidden rounded-lg border border-line bg-surface">
+              <div className="space-y-2 border-b border-line px-4 py-3">
+                <h2 className="font-semibold">{focused.path.split('/').join(' › ')}</h2>
+                <p className="text-sm text-ink-2">{focused.node.description ?? 'No definition was written for this tag.'}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {focused.node.status === 'proposed' && (
+                    <>
+                      <button className="btn" onClick={() => decide('approve', focused)}>
+                        <Check size={15} className="text-ok" /> Approve <Keys keys={bindings['proposed.approve']} />
+                      </button>
+                      <button className="btn" onClick={() => decide('reject', focused)}>
+                        <X size={15} className="text-danger" /> Reject <Keys keys={bindings['proposed.reject']} />
+                      </button>
+                    </>
+                  )}
+                  {under > 1 && (
+                    <>
+                      <button className="btn" onClick={() => decideTree('approve', focused)}>
+                        Approve all {under} under it <Keys keys={bindings['proposed.approveTree']} />
+                      </button>
+                      <button className="btn" onClick={() => decideTree('reject', focused)}>
+                        Reject all <Keys keys={bindings['proposed.rejectTree']} />
+                      </button>
+                    </>
+                  )}
+                  <span className="flex-1" />
+                  <button className="btn" aria-pressed={doubtful} onClick={() => setDoubtful(!doubtful)} title={`Only items an agent attached with confidence below ${DOUBTFUL_BELOW}`}>
+                    <span className={doubtful ? 'text-accent' : ''}>Doubtful only</span> <Keys keys={bindings['proposed.doubtful']} />
                   </button>
-                  <button className="btn h-8 px-2" aria-label={`Reject ${t.path}`} onClick={(e) => (e.stopPropagation(), decide('reject', t))}>
-                    <X size={15} className="text-danger" /> Reject
+                  <button className="text-sm text-accent hover:underline" onClick={() => goQuery(`#${quoteValue(focused.path)}`)}>
+                    Open in the library
                   </button>
                 </div>
-                {on && (
-                  <ul aria-label="Sample items" className="mt-2 space-y-1 border-l-2 border-line pl-3 text-sm text-ink-2">
-                    {samples.isPending && <li className="skeleton h-12" />}
-                    {samples.data?.items.slice(0, 3).map((i) => (
-                      <li key={i.id} className="truncate">
-                        <span className="font-medium text-ink">{i.author.name ?? i.author.handle}</span> {(i.title ?? i.body ?? '').replace(/\s+/g, ' ')}
-                      </li>
-                    ))}
-                    {samples.data?.items.length === 0 && <li>No items carry it yet.</li>}
-                  </ul>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+              </div>
+              <Samples key={`${focused.id}:${doubtful}`} tag={focused} doubtful={doubtful} page={page} setPage={setPage} />
+            </section>
+          )}
+        </div>
       )}
     </div>
   );

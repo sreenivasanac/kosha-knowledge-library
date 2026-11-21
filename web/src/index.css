@@ -19,6 +19,8 @@
   --danger: #b3261e;
   --ok: #1f7a4d;
   --shadow: 0 1px 2px rgb(23 32 43 / 0.06), 0 8px 28px rgb(23 32 43 / 0.12);
+  /* Width of the reader drawer; the page reserves the same space on wide screens. */
+  --drawer-w: clamp(420px, calc(100vw - 1000px), 560px);
 }
 @media (prefers-color-scheme: dark) {
   :root {
