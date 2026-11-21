@@ -32,6 +32,7 @@ from kosha.pipeline.parser import Stage, Tok, number, split
 from kosha.prefs import load_settings
 from kosha.search import engine
 from kosha.search.embeddings import DOC_MODEL, QUERY_MODEL, EmbeddingError, embed_texts, query_vector, record_spend
+from kosha.search import rerank as reranking
 from kosha.search.query import KEYS, SORT_KEYS, And, Not, Or, QueryError, Text, compile_filter, order_by, parse, to_string
 from kosha.summaries import item_text
 
@@ -72,7 +73,10 @@ FILTER (in `where`): from:a,b  #tag/path  is:untagged|starred|unread|thin  type:
   after a jev stage: p:>=0.9  p:0.5..0.8  (any answer name)
 
 NARROW/RANK  where <filter> | grep [-v] word ~fuzzy /re/ [in:title,body] | semantic "text" [top N]
-  hybrid "text" [top N] (keyword+meaning, best 400 at most) | similar <id|@set> [top N]
+  hybrid "text" [top N] (keyword+meaning, best 400 at most) | similar <id|@set> [top N] (50 nearest unless top N, or head N follows)
+  rerank [voyage|jev] ["text"] [top N]  (paid, about $0.0005 with voyage: a second reader reorders the first 50 of the set
+  by how well each item answers the text; without "text", the text of the hybrid/semantic stage before it. Use after
+  `hybrid ... | head 50` for long or project-style questions. voyage is the default; jev reads literally, so not for misspelled text)
   sort <saved|posted|likes|views|len|score|p> [asc] | head N | tail N | skip N | sample N [seed]
 JUDGE (paid, cached; Jev reads the first 2,000 characters of each item, literally: ask a full question
   that says what counts. A fragment scores near 0.5 for everything. 0.8 is the tested cut-off.)
@@ -94,6 +98,7 @@ EXAMPLES
   where from:a,b,c | grep ~retriev | semantic "retrieval augmented generation" | head 200 | jev "about RAG / retrieval-augmented generation?" >= 0.9 | tag "AI/RAG"
   where is:untagged | groups 12 as u            then: @u3 | groups 6 as u3.
   @u3 | terms 12                                then: all | grep retriev* | except @u3 | sample 8 | show id text:60
+  all | hybrid "which posts explain how to evaluate a retrieval pipeline" | head 50 | rerank voyage top 10 | show id summary:120 score
   all | semantic "vector databases" top 300 | jev "Is this about vector databases or embedding search?" as vdb | as @vdb
   @vdb | where vdb:0.5..0.8 | sample 12 | show id summary:90 vdb
   @vdb | where vdb:>=0.8 | tag "AI/Vector search"      (preview) then the same call with confirm="c_..."
@@ -113,6 +118,7 @@ class Ctx:
     scores: dict[int, float] = field(default_factory=dict)  # the last ranking score
     answers: dict[str, dict[int, float]] = field(default_factory=dict)  # Jev answers by name
     last_alias: str | None = None
+    rank_text: str | None = None  # what the last `hybrid` or `semantic` stage ranked by: `rerank`'s default text
     out: list[str] = field(default_factory=list)  # body lines, in stage order
     rows: list[dict] = field(default_factory=list)  # what `show` produced, for the web app
     row_lines: tuple[int, int, int] | None = None  # (first line in `out`, rows shown, rows in set)
@@ -348,6 +354,7 @@ def s_semantic(ctx: Ctx, stage: Stage):
     toks = stage.toks()
     wanted = _quoted_text(ctx, stage, toks, "a description")
     top = _options(stage, toks[1:], {"top": _top}).get("top")
+    ctx.rank_text = wanted
     try:
         vector = query_vector(ctx.session, ctx.user_id, wanted)
     except EmbeddingError as exc:
@@ -367,6 +374,7 @@ def s_hybrid(ctx: Ctx, stage: Stage):
     if not query.rank_text:
         raise QueryError("hybrid needs words to rank by", toks[0].pos)
     query.include = frozenset({"archived", "context"})
+    ctx.rank_text = wanted
     ids, scores, notice = engine.rank(ctx.session, ctx.user_id, query, "hybrid", [_in_set(ctx.ids)])
     ctx.ids = ids[:top] if top else ids
     ctx.scores = dict(zip(ids, (round(s, 4) for s in scores)))
@@ -378,6 +386,9 @@ def s_similar(ctx: Ctx, stage: Stage):
     if not toks or not re.fullmatch(rf"\d+|@{NAME_RE}", toks[0].text):
         raise QueryError("similar needs an item id or a @set", stage.arg_pos if stage.arg else stage.pos)
     top = _options(stage, toks[1:], {"top": _top}).get("top")
+    if top is None:  # the 50 nearest, unless the next stage is a `head N` that asks for more
+        after = next((later for this, later in zip(ctx.stages, ctx.stages[1:]) if this is stage), None)
+        top = max(engine.SIMILAR_TOP_N, _one_number(after) if after is not None and after.name == "head" else 0)
     target = toks[0].text
     if target.startswith("@"):
         target = "@" + _load_set(ctx, target[1:], toks[0].pos).name
@@ -386,6 +397,37 @@ def s_similar(ctx: Ctx, stage: Stage):
     except QueryError as exc:
         raise QueryError(exc.message, toks[0].pos) from None
     return _rank_by_vector(ctx, vector, top, exclude=int(target) if target.isdigit() else None)
+
+
+def s_rerank(ctx: Ctx, stage: Stage):
+    """A paid second stage on the head of the set (kosha.search.rerank): the
+    first RERANK_TOP_N items are reordered by how well each answers the text,
+    the rest keep their place behind them. The scores replace `score`."""
+    toks = stage.toks()
+    method = "voyage"
+    if toks and not toks[0].quoted and toks[0].text.lower() in ("voyage", "jev"):
+        method, toks = toks[0].text.lower(), toks[1:]
+    wanted = ctx.rank_text
+    if toks and toks[0].quoted:
+        wanted, toks = toks[0].text, toks[1:]
+    top = _options(stage, toks, {"top": _top}).get("top")
+    if not (wanted or "").strip():
+        raise QueryError('rerank needs a text: rerank [voyage|jev] "what you are looking for" [top N] '
+                         "(or put it after a hybrid or semantic stage, whose text it then uses)", stage.arg_pos if stage.arg else stage.pos)
+    # Ask's allowance for the question. Jev checks its own estimate against it (jev.check_budget).
+    # ponytail: a Voyage rerank of 50 items is about $0.0005 and its price is only known after the
+    # call, so it is refused only once the allowance is used up; estimate from the texts if the head grows.
+    allowance = jev.call_allowance.get()
+    if method == "voyage" and allowance is not None and allowance <= 0:
+        raise QueryError("rerank: this question has used up what it may spend; answer from the order you have", stage.pos)
+    try:
+        ids, scores, usd = reranking.rerank_with_cost(ctx.session, ctx.user_id, wanted, ctx.ids, method)
+    except reranking.RerankError as exc:
+        raise QueryError(f"rerank {method} is unavailable: {exc}", stage.pos) from None
+    ctx.usd += usd
+    ctx.ids = ids[:top] if top else ids
+    ctx.scores = {i: round(s, 4) for i, s in scores.items()}
+    return f"{method} judged={len(scores)}"
 
 
 def s_sort(ctx: Ctx, stage: Stage):
@@ -964,7 +1006,7 @@ def s_save(ctx: Ctx, stage: Stage):
 
 
 STAGES = {
-    "where": s_where, "grep": s_grep, "semantic": s_semantic, "hybrid": s_hybrid, "similar": s_similar, "sort": s_sort,
+    "where": s_where, "grep": s_grep, "semantic": s_semantic, "hybrid": s_hybrid, "similar": s_similar, "rerank": s_rerank, "sort": s_sort,
     "head": s_head, "tail": s_tail, "skip": s_skip, "sample": s_sample, "jev": s_jev, "score_labels": s_score_labels,
     "union": s_union, "intersect": s_intersect, "except": s_except, "count": s_count, "stats": s_stats, "terms": s_terms,
     "groups": s_groups, "show": s_show, "as": s_as, "tag": s_tag, "untag": s_untag, "roles": s_roles, "list": s_list,

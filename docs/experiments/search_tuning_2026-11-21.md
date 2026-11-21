@@ -138,7 +138,7 @@ All on the adopted retrieval; differences under about 0.01 nDCG are noise at 36 
 
 ## 8. For the pipeline owner
 
-The `rerank` stage is still missing; nothing in `kosha/pipeline/` was edited. The function to call is `kosha.search.rerank.rerank(session, user_id, text, ids, method)` with `method` `"voyage"` or `"jev"`: it reorders the first 50 ids, returns `(ids, {id: score})`, writes its own ledger row and raises `RerankError` when the service cannot be used. Suggested stage: `rerank "text" [voyage|jev] [>= score]`. Also: `engine.rank()` now returns up to about 400 ids with no similarity floor, so `hybrid` inside a narrow `where` no longer returns 0.
+The `rerank` stage was missing when this was written; it has since been added as `rerank [voyage|jev] ["text"] [top N]` (`docs/MCP.md`). The function to call is `kosha.search.rerank.rerank(session, user_id, text, ids, method)` with `method` `"voyage"` or `"jev"`: it reorders the first 50 ids, returns `(ids, {id: score})`, writes its own ledger row and raises `RerankError` when the service cannot be used. Suggested stage: `rerank "text" [voyage|jev] [>= score]`. Also: `engine.rank()` now returns up to about 400 ids with no similarity floor, so `hybrid` inside a narrow `where` no longer returns 0.
 
 Edits outside `kosha/search/`: `kosha/api/items.py` (two query parameters passed to `search`, `weak_hidden` in the reply) and `kosha/schemas.py` (`ItemPage.weak_hidden`, the notice comment).
 

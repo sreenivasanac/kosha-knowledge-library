@@ -9,10 +9,10 @@ import re
 from datetime import UTC, datetime
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from kosha.config import DEFAULT_NAMESPACE
-from kosha.models import Collection, Item, ItemCollection, ItemLink, List, ResultSet, SavedView, Tag
+from kosha.models import Collection, Item, ItemCollection, ItemLink, ItemTag, List, ResultSet, SavedView, Tag
 from kosha.search.engine import SNAPSHOT_PREFIX, recent_searches
 from kosha.search.query import DATE_WORDS, KEYS, QueryError, compile_filter, parse
 
@@ -101,14 +101,24 @@ def _tags(ctx: _Context, typed: str) -> list[dict]:
     tags = {t.id: t for t in ctx.session.scalars(
         select(Tag).where(Tag.user_id == ctx.user_id, Tag.namespace == DEFAULT_NAMESPACE))}
     parents = {t.parent_id for t in tags.values()}
+    # Items of the current result under each tag (its subtree), in one query: the order of the suggestions.
+    on, held, under = aliased(ItemTag), aliased(Tag), aliased(Tag)
+    counts = dict(ctx.session.execute(
+        select(under.id, func.count(func.distinct(Item.id)))
+        .join(on, (on.item_id == Item.id) & ~on.removed_by_user & (on.namespace == DEFAULT_NAMESPACE))
+        .join(held, held.id == on.tag_id)
+        .join(under, held.path.op("<@")(under.path) & (under.user_id == ctx.user_id) & (under.namespace == DEFAULT_NAMESPACE))
+        .where(*ctx.where).group_by(under.id)).all())
+    wanted = typed.lower()
     out = []
     for tag in tags.values():
         path = "/".join(tags[int(i)].name for i in str(tag.path).split(".") if int(i) in tags)
-        if typed.lower() in path.lower():
-            out.append((path, tag.id in parents))
-    out.sort(key=lambda pair: (not pair[0].lower().startswith(typed.lower()), len(pair[0]), pair[0].lower()))
+        if wanted in path.lower():  # anywhere in the path, so any segment matches
+            starts = any(part.startswith(wanted) for part in (path.lower(), *path.lower().split("/")))
+            out.append((not starts, -counts.get(tag.id, 0), path.lower(), path, tag.id in parents))
+    out.sort()  # a segment that starts with what was typed first, then the most items
     rows = []
-    for path, has_children in out[:MAX_SUGGESTIONS]:
+    for *_, path, has_children in out[:MAX_SUGGESTIONS]:
         rows.append(_row("#" + _quote(path), path.replace("/", " › "), "tag", ctx.count("#" + _quote(path))))
         if has_children:
             below = "#" + _quote(path + "/*")

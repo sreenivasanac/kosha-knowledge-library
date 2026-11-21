@@ -928,6 +928,18 @@ def compile_filter(session: Session, user_id: int, query: Query, lift_rank_atoms
     return where
 
 
+def list_order(query: Query, user_id: int) -> list | None:
+    """ORDER BY for a query that is one `list:` qualifier and nothing else: the
+    list's own order (as `GET /api/lists/{id}` gives it). None for any other query."""
+    p = query.filter
+    if not isinstance(p, Pred) or p.key != "list" or query.sort or query.similar:
+        return None
+    member = lambda column: (select(column).join(List, List.id == ListItem.list_id).where(  # noqa: E731
+        ListItem.item_id == Item.id, List.user_id == user_id, func.lower(List.name) == p.value.lower())
+        .correlate(Item).limit(1).scalar_subquery())
+    return [member(ListItem.position).asc().nulls_last(), member(ListItem.added_at), Item.id]
+
+
 def order_by(sort: tuple[str, bool]) -> list:
     """ORDER BY for a plain (unranked) sort. `saved` is the list's own stable order."""
     key, descending = sort

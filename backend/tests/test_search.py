@@ -185,6 +185,13 @@ def test_id_list_set_and_compile_errors(session, user, library, client):
     made = client.post("/api/lists", json={"name": "To read"}).json()
     client.post(f"/api/lists/{made['id']}/items", json={"item_ids": [library["long"]]})
     assert found(session, user, 'list:"to read"') == {"long"}
+    # A lone list: reads in the list's own order; with a sort, or more in the query, the usual order.
+    client.post(f"/api/lists/{made['id']}/items", json={"item_ids": [library["pg"], library["repo"]]})
+    client.put(f"/api/lists/{made['id']}/order", json={"item_ids": [library["repo"], library["long"], library["pg"]]})
+    listed = lambda **params: [i["id"] for i in client.get("/api/items", params=params).json()["items"]]  # noqa: E731
+    assert listed(q='list:"To read"') == [library["repo"], library["long"], library["pg"]]
+    assert listed(q='list:"To read" sort:saved') == [library["long"], library["repo"], library["pg"]]
+    assert listed(q='list:"To read"', sort="saved-asc") == [library["pg"], library["repo"], library["long"]]
     for q, position in (("x #nope", 2), ("@nope", 0)):
         with pytest.raises(QueryError) as caught:
             compile_filter(session, user.id, parse(q))
@@ -305,6 +312,16 @@ def test_suggest(session, user, client, library):
     tags = {s["insert"]: s["count"] for s in rows("#")["suggestions"]}
     assert tags == {"#AI": 2, "#AI/*": 1, "#AI/RAG": 1}
     assert [s["insert"] for s in rows("from:bob #ra")["suggestions"]] == ["#AI/RAG"]
+    # Most items first, counted inside the current result; a later path segment matches too.
+    session.add(Tag(user_id=user.id, name="Zoo", slug="zoo", path="3", id=3))
+    session.flush()
+    session.add_all([ItemTag(item_id=library[name], tag_id=3) for name in ("pg", "rag", "video", "repo")])
+    session.commit()
+    assert [s["insert"] for s in rows("#")["suggestions"]][:2] == ["#Zoo", "#AI"]
+    assert [s["insert"] for s in rows("from:dee #")["suggestions"]][0] == "#AI"
+    assert [s["insert"] for s in rows("#rag")["suggestions"]] == ["#AI/RAG"]
+    session.delete(session.get(Tag, 3))  # its item rows go with it
+    session.commit()
     assert {s["insert"]: s["count"] for s in rows("domain:")["suggestions"]} == {"github.com": 1, "blog.example.com": 1}
     assert rows("folder:")["suggestions"][0] == {"insert": '"Coding with AI"', "label": "Coding with AI", "count": 1, "kind": "value"}
     states = {s["insert"]: s["count"] for s in rows("is:")["suggestions"]}

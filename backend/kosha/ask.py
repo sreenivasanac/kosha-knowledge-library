@@ -5,7 +5,7 @@ An ordinary tool-use loop with one tool, `query`, which runs a read-only
 pipeline. The model plans a pipeline, reads the compact rows, refines, and
 answers citing item ids as [123]. Limits: MAX_TOOL_CALLS calls, each result cut
 to RESULT_MAX_CHARS, INPUT_TOKENS_HARD_STOP input tokens over the loop, and
-JEV_ALLOWANCE_USD of Jev per question.
+JEV_ALLOWANCE_USD of paid stages (Jev and `rerank`) per question.
 """
 import json
 import re
@@ -27,13 +27,13 @@ from kosha.search.query import QueryError
 MAX_TOOL_CALLS = 6
 RESULT_MAX_CHARS = 4800  # about 1,200 tokens per tool result
 INPUT_TOKENS_HARD_STOP = 40_000  # summed over the loop; past it the model must answer with what it has
-JEV_ALLOWANCE_USD = 0.02  # Jev money one question may spend without asking
+JEV_ALLOWANCE_USD = 0.02  # what one question's paid stages (Jev, rerank) may spend without asking
 REASONING_EFFORT = "low"
 ANSWER_MAX_TOKENS = 1500
 TAG_TREE_MAX = 60  # tags of the top two levels shown in the system prompt
 # Stages Ask may run. Everything that changes the library (tag, untag, roles,
 # star, archive, list, save, score_labels ...) is absent, so it is refused.
-READ_STAGES = frozenset({"where", "@", "all", "grep", "semantic", "hybrid", "similar", "sort", "head", "tail", "skip",
+READ_STAGES = frozenset({"where", "@", "all", "grep", "semantic", "hybrid", "similar", "rerank", "sort", "head", "tail", "skip",
                          "sample", "jev", "union", "intersect", "except", "count", "stats", "terms", "groups", "show", "as"})
 # `as` and `groups` save named sets; Ask's go under this prefix, so a question
 # (or text in a bookmark that steers the model) cannot replace a set the user or an agent saved.
@@ -56,6 +56,8 @@ FILTER (inside `where`): from:handle,handle  #tag/path  is:untagged|starred|unre
   tagged-by:ai  conf:<0.85  word  "a phrase"  prefix*  ~fuzzy  -negated  (a OR b)
 RANK    hybrid "topic words" [top N] (keywords + meaning; the default) | semantic "a description" [top N] (meaning \
 only: use when the wording is unknown) | grep word | similar <id|@set> [top N]
+        rerank [voyage|jev] ["text"] [top N]   (paid, about $0.0005, from the same allowance as jev: a second reader \
+reorders the first 50 by how well each answers the text; without "text" it uses the hybrid text before it)
         sort saved|posted|likes|views|len|duration|score|<answer name> [asc|desc] | head N | skip N | sample N
 JUDGE   jev "A full yes/no question that says what counts?" [>= 0.8] [as name]   (paid: only on 300 items or fewer; \
 allowance ${allowance:.2f} a question)
@@ -72,6 +74,8 @@ HOW TO WORK
 `show id author date summary:120 score | head 15`.
 3. Inspect the rows. Found, too few, too many, or needs a judgment?
 4. Refine, at most three times. Too few: drop the weakest qualifier, add synonyms with OR, or use `semantic`. \
+Long or project-style questions ("which posts would help me build X", a whole sentence): `hybrid` alone ranks these \
+loosely, so use `hybrid "..." | head 50 | rerank voyage` and read the top of that; it is the main gain in precision. \
 Too many and it needs a criterion: add `jev` after `head 300`. Counting questions: use `count by`, never count rows yourself.
 5. Answer. Read `summary:300` of at most 12 items, `body:1500` of at most 3 when detail is needed.
 You have {max_steps} tool calls. Stop early when a known item is found with a clear margin or a refinement changed nothing.
@@ -80,6 +84,8 @@ EXAMPLES
   where from:simonw | hybrid "sqlite full-text search versus embeddings" top 10 | show id author date summary:150 score
   where type:video duration:<5m | hybrid "prompt caching" top 20 | show id author date summary:120
   where domain:github.com | hybrid "postgres job queue" top 15 | show id author summary:100 url
+  all | hybrid "how to evaluate a retrieval pipeline before shipping it" | head 50 | rerank voyage top 12 | show id author \
+summary:150 score
   all | hybrid "chrome extension intercept fetch" top 200 | jev score "How useful is this for designing a Chrome \
 extension that intercepts fetch requests?" as use | sort use desc | head 20 | show id summary:150 use
   all | hybrid "AI agents" top 300 | jev "Is this about building or using AI agents?" >= 0.8 | count by author top 10

@@ -51,7 +51,9 @@ def ask(body: AskIn, user: User = Depends(current_user), session: Session = Depe
 @router.post("/ask/stream")
 def ask_stream(body: AskIn, user: User = Depends(current_user)) -> StreamingResponse:
     """The same as `POST /api/ask`, as server-sent events: one `step` event
-    per pipeline as it finishes, then `done` with the full answer (or `error`)."""
+    per pipeline as it finishes, then `done` with the full answer, or `error`
+    with `{status, message}`: the status `POST /api/ask` would have answered
+    with (402 when the monthly LLM cap is used up, 503 when the model cannot be reached)."""
     events: queue.Queue = queue.Queue()
     user_id = user.id
 
@@ -60,8 +62,11 @@ def ask_stream(body: AskIn, user: User = Depends(current_user)) -> StreamingResp
             with SessionLocal() as session:
                 result = ask_module.ask(session, user_id, body.question, body.max_steps, on_step=lambda step: events.put(("step", step)))
             events.put(("done", result))
+        except llm.LLMError as exc:
+            error = _llm_error(exc)
+            events.put(("error", {"status": error.status_code, "message": str(error.detail)[:300]}))
         except Exception as exc:  # the stream must always end with an event
-            events.put(("error", {"message": str(exc)[:300]}))
+            events.put(("error", {"status": status.HTTP_500_INTERNAL_SERVER_ERROR, "message": str(exc)[:300]}))
 
     def stream():
         threading.Thread(target=work, name="kosha-ask", daemon=True).start()

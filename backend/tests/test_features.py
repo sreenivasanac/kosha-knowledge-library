@@ -150,6 +150,31 @@ def test_ask_routes(client, session, user, fake_llm):
         assert response.headers["content-type"].startswith("text/event-stream")
     assert events == ["event: step", "event: done"]
 
+    # A refusal ends the stream with an `error` event that carries the status the plain route answers with.
+    session.merge(Setting(user_id=user.id, key="llm_monthly_cap_usd", value=0.0))
+    session.commit()
+    assert client.post("/api/ask", json={"question": "pgvector?"}).status_code == 402
+    with client.stream("POST", "/api/ask/stream", json={"question": "pgvector?"}) as response:
+        lines = [line for line in response.iter_lines() if line]
+    error = json.loads(lines[-1].removeprefix("data: "))
+    assert lines[-2] == "event: error" and error["status"] == 402 and "cap" in error["message"]
+
+
+def test_ask_may_rerank_and_its_cost_comes_off_the_allowance(session, user, fake_llm, monkeypatch):
+    first, second = add_item(session, user, "1", "pgvector HNSW tuning notes"), add_item(session, user, "2", "pgvector and a cat")
+    calls = []
+
+    def fake(session_, user_id, text, ids, method):
+        calls.append((text, method, jev.call_allowance.get()))
+        return [second.id, first.id], {second.id: 0.9, first.id: 0.1}, 0.005
+
+    monkeypatch.setattr(ask_module.run_query.__globals__["reranking"], "rerank_with_cost", fake)
+    pipeline = 'where pgvector | rerank voyage "tuning pgvector" | show id score'
+    fake_llm.script = [reply(pipelines=[pipeline]), reply(pipelines=[pipeline]), reply("Done.")]
+    result = ask_module.ask(session, user.id, "which post is about tuning pgvector?")
+    assert result["spent"]["jev_usd"] == 0.01 and "rerank" in ask_module.SYSTEM_PROMPT
+    assert [c[2] for c in calls] == [ask_module.JEV_ALLOWANCE_USD, pytest.approx(ask_module.JEV_ALLOWANCE_USD - 0.005)]
+
 
 # --- Summaries --------------------------------------------------------------
 def test_rule_summary_takes_the_start_of_a_media_extract(session, user):
@@ -376,32 +401,46 @@ def test_spend(client, session, user):
         SpendLedger(user_id=user.id, provider="openai", operation="ask", amount_usd=Decimal("0.05"), meta={"via": "llm"}),
         SpendLedger(user_id=user.id, provider="openai", operation="ask", amount_usd=Decimal("0.01"), meta={"via": "llm"}),
         SpendLedger(user_id=user.id, provider="voyage", operation="embed", amount_usd=Decimal("0.30")),
+        SpendLedger(user_id=user.id, provider="openai", operation="experiment", amount_usd=Decimal("1")),  # a script's direct call
         SpendLedger(user_id=user.id, provider="x", operation="old", amount_usd=Decimal("9"), created_at=datetime(2020, 1, 1, tzinfo=UTC)),
     ])
     session.commit()
     body = client.get("/api/spend").json()
-    assert body["month"] == datetime.now(UTC).strftime("%Y-%m") and body["total_usd"] == 0.38
-    assert body["providers"] == [{"provider": "jev", "usd": 0.02, "calls": 1}, {"provider": "openai", "usd": 0.06, "calls": 2},
-                                 {"provider": "voyage", "usd": 0.3, "calls": 1}]
+    assert body["month"] == datetime.now(UTC).strftime("%Y-%m") and body["total_usd"] == 1.38
+    assert body["providers"] == [{"provider": "jev", "usd": 0.02, "capped_usd": 0.02, "calls": 1},
+                                 {"provider": "openai", "usd": 1.06, "capped_usd": 0.06, "calls": 3},
+                                 {"provider": "voyage", "usd": 0.3, "capped_usd": 0.0, "calls": 1}]
     assert {c["name"]: (c["cap_usd"], c["spent_usd"]) for c in body["caps"]} == {"x": (3.0, 0.0), "jev": (5.0, 0.02), "llm": (5.0, 0.06)}
+    # What the caps leave out is listed, so the two sets of numbers add up.
+    assert [(u["provider"], u["operation"], u["usd"]) for u in body["uncapped"]] == [("openai", "experiment", 1.0), ("voyage", "embed", 0.3)]
+    assert all(c["counts"] for c in body["caps"]) and body["note"]
+    assert body["caps"][2]["spent_usd"] == round(llm.month_spend(session, user.id), 6)  # the number the cap check uses
 
 
 def test_sync_routes(client, session, user, monkeypatch):
     ran = []
     monkeypatch.setattr(account.x_api, "sync_bookmarks", lambda own, user_id: ran.append(user_id))
     assert client.post("/api/sync", json={"source": "linkedin"}).status_code == 422
-    assert client.post("/api/sync", json={"source": "x_api"}).json() == {"source": "x_api", "status": "disabled"}
+    off = client.post("/api/sync", json={"source": "x_api"}).json()
+    assert (off["status"], "x_api_sync_enabled" in off["reason"]) == ("disabled", True)
     assert not ran  # off by default: X is never called
     assert client.get("/api/sync").json() == []
 
     session.merge(Setting(user_id=user.id, key="x_api_sync_enabled", value=True))
     session.add(SyncState(user_id=user.id, source="x_api", state={"status": "end", "pages": 1}))
+    session.add(SyncState(user_id=user.id, source="media_text", state={"done": 1}))  # another job's row: not a sync source
     session.commit()
+    env = account.get_settings()
+    monkeypatch.setattr(env, "kosha_x_access_token", "")
+    missing = client.post("/api/sync", json={"source": "x_api"}).json()
+    assert missing["status"] == "not_configured" and "KOSHA_X_ACCESS_TOKEN" in missing["reason"] and not ran
+    monkeypatch.setattr(env, "kosha_x_access_token", "t")
+    monkeypatch.setattr(env, "kosha_x_user_id", "1")
     assert client.post("/api/sync", json={"source": "x_api"}).json()["status"] == "started"
     account._sync_threads[(user.id, "x_api")].join(timeout=5)
     assert ran == [user.id]
     state = client.get("/api/sync").json()
-    assert state[0]["source"] == "x_api" and state[0]["state"]["status"] == "end" and state[0]["running"] is False
+    assert len(state) == 1 and state[0]["source"] == "x_api" and state[0]["state"]["status"] == "end" and state[0]["running"] is False
 
 
 def test_list_rename_and_delete(client, session, user):

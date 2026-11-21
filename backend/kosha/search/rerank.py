@@ -34,7 +34,7 @@ class RerankError(RuntimeError):
     pass
 
 
-def _voyage(session: Session, user_id: int, query: str, ids: list[int], texts: dict[int, str]) -> dict[int, float]:
+def _voyage(session: Session, user_id: int, query: str, ids: list[int], texts: dict[int, str]) -> tuple[dict[int, float], float]:
     key = get_settings().voyage_api_key
     if not key:
         raise RerankError("VOYAGE_API_KEY is not set")
@@ -46,31 +46,37 @@ def _voyage(session: Session, user_id: int, query: str, ids: list[int], texts: d
     if response.status_code != 200:
         raise RerankError(f"Voyage answered {response.status_code}: {response.text[:200]}")
     body = response.json()
-    record_spend(session, user_id, VOYAGE_RERANK_MODEL, "rerank", body["usage"]["total_tokens"], items=len(ids))
-    return {ids[row["index"]]: row["relevance_score"] for row in body["data"]}
+    usd = record_spend(session, user_id, VOYAGE_RERANK_MODEL, "rerank", body["usage"]["total_tokens"], items=len(ids))
+    return {ids[row["index"]]: row["relevance_score"] for row in body["data"]}, float(usd)
 
 
-def _jev(session: Session, user_id: int, query: str, ids: list[int], texts: dict[int, str]) -> dict[int, float]:
+def _jev(session: Session, user_id: int, query: str, ids: list[int], texts: dict[int, str]) -> tuple[dict[int, float], float]:
     question = Question(JEV_QUESTION.format(query=query.strip().rstrip("?")))
     pairs = [(question, i, texts[i]) for i in ids]
     try:
         jev.check_budget(session, user_id, jev.estimate(session, user_id, pairs).usd)
-        answers, _ = jev.ask(session, user_id, pairs, "search_rerank")
+        answers, spend = jev.ask(session, user_id, pairs, "search_rerank")
     except (jev.BudgetError, JevError, httpx.HTTPError) as exc:
         raise RerankError(str(exc)) from None
-    return {i: answer.value for i, answer in zip(ids, answers)}
+    return {i: answer.value for i, answer in zip(ids, answers)}, spend.usd
 
 
-def rerank(session: Session, user_id: int, query: str, ids: list[int], method: str) -> tuple[list[int], dict[int, float]]:
+def rerank_with_cost(session: Session, user_id: int, query: str, ids: list[int], method: str) -> tuple[list[int], dict[int, float], float]:
     """Reorder the first RERANK_TOP_N ids by the reranker's score, best first
     (ties keep the incoming order). Items with too little text to judge stay
-    behind the judged ones. Returns the new order and the score of each judged
-    id. Raises RerankError when the service cannot be used; nothing is reordered then."""
+    behind the judged ones. Returns the new order, the score of each judged
+    id, and what the call cost (it is in the ledger already). Raises
+    RerankError when the service cannot be used; nothing is reordered then."""
     head, tail = ids[:RERANK_TOP_N], ids[RERANK_TOP_N:]
     texts = jev.item_texts(session, user_id, head)
     judged = [i for i in head if i in texts]
     if not judged:
-        return ids, {}
-    scores = (_voyage if method == "voyage" else _jev)(session, user_id, query, judged, texts)
+        return ids, {}, 0.0
+    scores, usd = (_voyage if method == "voyage" else _jev)(session, user_id, query, judged, texts)
     judged.sort(key=lambda i: -scores[i])  # stable
-    return judged + [i for i in head if i not in texts] + tail, scores
+    return judged + [i for i in head if i not in texts] + tail, scores, usd
+
+
+def rerank(session: Session, user_id: int, query: str, ids: list[int], method: str) -> tuple[list[int], dict[int, float]]:
+    """`rerank_with_cost` without the cost (what the search bar wants)."""
+    return rerank_with_cost(session, user_id, query, ids, method)[:2]

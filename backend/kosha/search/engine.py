@@ -18,7 +18,9 @@ from sqlalchemy.orm import Session, aliased
 from kosha.items_query import fetch_page
 from kosha.models import Item, ItemEmbedding, ResultSet, SearchHistory
 from kosha.search.embeddings import DOC_MODEL, EmbeddingError, query_vector
-from kosha.search.query import Query, QueryError, Text, compile_filter, order_by, parse, parse_sort, text_condition, to_string, ts_config
+from kosha.search.query import (
+    Query, QueryError, Text, compile_filter, list_order, order_by, parse, parse_sort, text_condition, to_string, ts_config,
+)
 from kosha.search.rerank import STRONG_SCORE as RERANK_STRONG_SCORE
 from kosha.search.rerank import RerankError
 from kosha.search.rerank import rerank as rerank_ids
@@ -29,6 +31,7 @@ from kosha.summaries import item_text
 # real library: docs/experiments/search_tuning_2026-11-21.md.
 RRF_K = 60
 RANKER_TOP_N = 200  # results each ranker contributes
+SIMILAR_TOP_N = 50  # `similar:` gives this many neighbours (the pipeline stage takes `top N` or a following `head N` for more)
 SNAPSHOT_MAX_ITEMS = 500
 SNAPSHOT_TTL = timedelta(minutes=30)  # from last use
 SNAPSHOT_PREFIX = "snap-"
@@ -185,12 +188,13 @@ def keyword_rank(session: Session, where: list[ColumnElement[bool]], query: Quer
     return [(item_id, float(c)) for item_id, c in session.execute(stmt)]
 
 
-def semantic_rank(session: Session, where: list[ColumnElement[bool]], vector, exclude_id: int | None = None) -> list[tuple[int, float]]:
+def semantic_rank(session: Session, where: list[ColumnElement[bool]], vector, exclude_id: int | None = None,
+                  limit: int = RANKER_TOP_N) -> list[tuple[int, float]]:
     """(id, cosine similarity) of the exact nearest neighbours inside the
     filtered set (no ANN index)."""
     distance = ItemEmbedding.vector.cosine_distance(vector)
     stmt = (select(Item.id, distance).join(ItemEmbedding, (ItemEmbedding.item_id == Item.id) & (ItemEmbedding.model == DOC_MODEL))
-            .where(*where).order_by(distance, Item.id).limit(RANKER_TOP_N))
+            .where(*where).order_by(distance, Item.id).limit(limit))
     if exclude_id is not None:
         stmt = stmt.where(Item.id != exclude_id)
     return [(item_id, 1 - d) for item_id, d in session.execute(stmt)]
@@ -244,7 +248,7 @@ def rank_all(session: Session, user_id: int, query: Query, mode: str, extra_wher
                 notice = "semantic_unavailable"  # hybrid falls back to keyword alone
         if query.similar:
             exclude = int(query.similar) if query.similar.isdigit() else None
-            similar_hits = semantic_rank(session, where, _similar_vector(session, user_id, query.similar), exclude)
+            similar_hits = semantic_rank(session, where, _similar_vector(session, user_id, query.similar), exclude, SIMILAR_TOP_N)
             semantic_hits = semantic_hits or similar_hits
             rankings.append(([i for i, _ in similar_hits], w_sem))
     fused = rrf(rankings)[:SNAPSHOT_MAX_ITEMS]
@@ -377,7 +381,8 @@ def search(session: Session, user_id: int, q: str, *, mode: str | None = None, s
         result["snapshot_id"] = snapshot.id
     else:
         where = compile_filter(session, user_id, query) + extra_where
-        order = order_by(query.sort if sort_key not in (None, "relevance") else ("saved", True))
+        # A lone `list:` with no sort reads in the list's own order.
+        order = list_order(query, user_id) or order_by(query.sort if sort_key not in (None, "relevance") else ("saved", True))
         items, total = fetch_page(session, user_id, where, page, page_size, order=order)
 
     if page == 1 and canonical and snapshot_id is None:

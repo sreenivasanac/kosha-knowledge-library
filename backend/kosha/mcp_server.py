@@ -73,9 +73,10 @@ def _fmt(values: dict) -> str:
 
 
 # --- query ------------------------------------------------------------------
-@mcp.tool(structured_output=False, description="Run a pipeline over the library: filter, search, judge with Jev, count, show, and bulk-write with "
+@mcp.tool(structured_output=False, description="Run a pipeline over the library: filter, search, rerank, judge with Jev, count, show, and bulk-write with "
                       "preview. One call does a whole chain on the server.\n\n" + GRAMMAR +
-                      "\nReplies start with `n=<items> spent=$<this call>` and one line of `stage in→out` per stage. "
+                      "\nReplies start with `n=<items> spent=$<this call>` and one line of `stage in→out` per stage, with the dollars "
+                      "of each paid stage (`jev`, `rerank`, `score_labels`). "
                       "A write over 25 items returns PREVIEW and a confirm token: repeat the same pipeline with `confirm`. "
                       f"A pipeline is at most {PIPELINE_MAX_CHARS} characters. "
                       "`run` is a label-run id (see `runs`): tags are then read and written in that run's trial namespace. "

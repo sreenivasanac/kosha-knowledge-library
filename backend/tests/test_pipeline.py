@@ -731,3 +731,39 @@ def test_mcp_tag_changes_on_the_owners_work_need_confirm_and_can_be_undone(sessi
     undo_batch(session, user.id, batch(made))
     session.expire_all()
     assert session.get(Tag, mine_id).name == "Mine" and writes.find_tag(session, user.id, "main", "New") is None
+
+
+def test_rerank_stage_and_similar_default(session, user, lib, monkeypatch):
+    seen = []
+
+    def fake_rerank(session_, user_id, text, ids, method):
+        seen.append((text, method, len(ids)))
+        return ids[::-1], {i: n / len(ids) for n, i in enumerate(ids)}, 0.0005
+
+    monkeypatch.setattr(executor.reranking, "rerank_with_cost", fake_rerank)
+    plain = q(session, user, 'all | hybrid "retrieval" | head 5 | show id')
+    out = q(session, user, 'all | hybrid "retrieval" | head 5 | rerank jev top 2 | show id score')
+    # The text of the stage before it; the head reversed; the cost on the stage and in the total.
+    assert seen == [("retrieval", "jev", 5)] and [r["id"] for r in out["rows"]] == [r["id"] for r in plain["rows"]][::-1][:2]
+    assert out["rows"][0]["score"] == 0.8 and out["spent_usd"] == 0.0005 and "rerank 5→2 $0.0005 (jev judged=5)" in out["text"]
+    q(session, user, 'where from:bob | rerank "robot arms"')
+    assert seen[-1] == ("robot arms", "voyage", N_ROBOT)
+    assert "needs a text" in err(session, user, "all | rerank voyage").message
+
+    def broken(*args):
+        raise executor.reranking.RerankError("VOYAGE_API_KEY is not set")
+
+    monkeypatch.setattr(executor.reranking, "rerank_with_cost", broken)
+    assert "unavailable" in err(session, user, 'all | rerank "x"').message
+
+    # `similar` keeps SIMILAR_TOP_N unless `top N` or a following `head N` asks for more.
+    monkeypatch.setattr(engine, "SIMILAR_TOP_N", 3)
+    assert q(session, user, f"all | similar {lib['rag'][0]}")["n"] == 3
+    assert q(session, user, f"all | similar {lib['rag'][0]} | head 7")["n"] == 7
+    assert q(session, user, f"all | similar {lib['rag'][0]} | head 2")["n"] == 2
+    assert q(session, user, f"all | similar {lib['rag'][0]} top 9")["n"] == 9
+    assert search_total(session, user, f"similar:{lib['rag'][0]}") == 3
+
+
+def search_total(session, user, text):
+    return engine.search(session, user.id, text, weak=True)["total"]

@@ -5,10 +5,12 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
+from kosha import llm
 from kosha.auth import current_user, hash_token, session_user
+from kosha.config import get_settings
 from kosha.db import SessionLocal, get_session
 from kosha.models import ApiToken, SpendLedger, SyncState, User
 from kosha.prefs import load_settings
@@ -20,6 +22,16 @@ TOKEN_PREFIX = "kosha_"
 TOKEN_BYTES = 32
 # Provider in `spend_ledger` -> the user setting that caps its month.
 SPEND_CAPS = {"x": "x_api_monthly_cap_usd", "jev": "jev_monthly_budget_usd", "llm": "llm_monthly_cap_usd"}
+# What each cap's `spent_usd` sums, said in the response so it can be read next to the provider totals.
+CAP_COUNTS = {
+    "x": "every ledger row of provider x",
+    "jev": "every ledger row of provider jev",
+    "llm": "the app's own LLM and speech-to-text calls (ledger rows with meta.via = llm, written by kosha/llm.py), "
+           "whichever provider served them",
+}
+SPEND_NOTE = ("A cap's spent_usd is what the app checks before a call. A provider's usd is everything in the ledger for it; "
+              "capped_usd is the part some cap counts. The rest (Voyage embeddings and reranking, and calls that scripts "
+              "made directly, such as docs/experiments runs) is under no cap and listed in uncapped.")
 SYNC_SOURCES = (x_api.SYNC_SOURCE,)  # what `POST /api/sync` can run on the server
 
 
@@ -64,23 +76,40 @@ def delete_token(token_id: int, user: User = Depends(session_user), session: Ses
 @router.get("/spend")
 def spend(user: User = Depends(current_user), session: Session = Depends(get_session)) -> dict:
     """This calendar month's paid calls by provider, with the caps:
-    `{month, total_usd, providers: [{provider, usd, calls}], caps: [{name, setting, cap_usd, spent_usd}]}`.
-    The `llm` cap covers every LLM and speech-to-text call, whichever provider served it."""
+    `{month, total_usd, providers: [{provider, usd, capped_usd, calls}], caps: [{name, setting, cap_usd, spent_usd, counts}],
+    uncapped: [{provider, operation, usd, calls}], note}`.
+    The `llm` cap covers the app's own LLM and speech-to-text calls (the ones `kosha/llm.py` makes and checks),
+    whichever provider served them. A provider's `usd` can be larger than any cap's `spent_usd`: `capped_usd`
+    is the part a cap counts, and `uncapped` lists the rest by operation."""
     start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month = (SpendLedger.user_id == user.id, SpendLedger.created_at >= start)
-    rows = session.execute(select(SpendLedger.provider, func.sum(SpendLedger.amount_usd), func.count())
-                           .where(*month).group_by(SpendLedger.provider).order_by(SpendLedger.provider)).all()
-    by_provider = {provider: float(usd) for provider, usd, _ in rows}
-    llm_usd = float(session.scalar(select(func.coalesce(func.sum(SpendLedger.amount_usd), 0)).where(
-        *month, SpendLedger.meta["via"].as_string() == "llm")))
+    # The cap a row counts against: `llm` for kosha/llm.py's rows, else the provider's own cap, else none.
+    cap = case((SpendLedger.meta["via"].as_string() == llm.LEDGER_VIA, "llm"),
+               (SpendLedger.provider.in_([name for name in SPEND_CAPS if name != "llm"]), SpendLedger.provider), else_=None)
+    rows = session.execute(select(SpendLedger.provider, SpendLedger.operation, cap, func.sum(SpendLedger.amount_usd), func.count())
+                           .where(SpendLedger.user_id == user.id, SpendLedger.created_at >= start)
+                           .group_by(SpendLedger.provider, SpendLedger.operation, cap)
+                           .order_by(SpendLedger.provider, SpendLedger.operation)).all()
+    providers: dict[str, dict] = {}
+    spent = dict.fromkeys(SPEND_CAPS, 0.0)
+    uncapped = []
+    for provider, operation, cap_name, usd, calls in rows:
+        entry = providers.setdefault(provider, {"provider": provider, "usd": 0.0, "capped_usd": 0.0, "calls": 0})
+        entry["usd"] += float(usd)
+        entry["calls"] += calls
+        if cap_name:
+            entry["capped_usd"] += float(usd)
+            spent[cap_name] += float(usd)
+        else:
+            uncapped.append({"provider": provider, "operation": operation, "usd": round(float(usd), 6), "calls": calls})
     settings = load_settings(session, user.id)
     return {
         "month": start.strftime("%Y-%m"),
-        "total_usd": round(sum(by_provider.values()), 6),
-        "providers": [{"provider": provider, "usd": round(float(usd), 6), "calls": calls} for provider, usd, calls in rows],
-        "caps": [{"name": name, "setting": key, "cap_usd": settings[key],
-                  "spent_usd": round(llm_usd if name == "llm" else by_provider.get(name, 0.0), 6)}
-                 for name, key in SPEND_CAPS.items()],
+        "total_usd": round(sum(p["usd"] for p in providers.values()), 6),
+        "providers": [{**p, "usd": round(p["usd"], 6), "capped_usd": round(p["capped_usd"], 6)} for p in providers.values()],
+        "caps": [{"name": name, "setting": key, "cap_usd": settings[key], "spent_usd": round(spent[name], 6),
+                  "counts": CAP_COUNTS[name]} for name, key in SPEND_CAPS.items()],
+        "uncapped": uncapped,
+        "note": SPEND_NOTE,
     }
 
 
@@ -89,22 +118,30 @@ _sync_threads: dict[tuple[int, str], threading.Thread] = {}  # one running sync 
 
 @router.get("/sync")
 def sync_status(user: User = Depends(current_user), session: Session = Depends(get_session)) -> list[dict]:
-    """The last run of each sync, from `sync_state`: `[{source, state, updated_at, running}]`."""
+    """The last run of each sync source (SYNC_SOURCES), from `sync_state`: `[{source, state, updated_at, running}]`.
+    Other jobs keep their state in the same table (`media_text`) and have their own status route."""
     return [{"source": row.source, "state": row.state, "updated_at": row.updated_at,
              "running": (thread := _sync_threads.get((user.id, row.source))) is not None and thread.is_alive()}
-            for row in session.scalars(select(SyncState).where(SyncState.user_id == user.id).order_by(SyncState.source))]
+            for row in session.scalars(select(SyncState).where(SyncState.user_id == user.id, SyncState.source.in_(SYNC_SOURCES))
+                                       .order_by(SyncState.source))]
 
 
 @router.post("/sync")
 def start_sync(body: SyncIn, user: User = Depends(current_user), session: Session = Depends(get_session)) -> dict:
     """Start a sync in the background. `x_api` is the official X API bookmark
-    sync: it answers `disabled` or `not_configured` without calling X when
-    the setting is off or the token is missing, and stops at the monthly cap.
+    sync: it answers `{status: "disabled" | "not_configured", reason}` without
+    starting anything when the setting is off or the server has no X API
+    credentials, and stops at the monthly cap.
     (Extension captures arrive on their own through `POST /api/captures`.)"""
     if body.source not in SYNC_SOURCES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"source must be one of: {', '.join(SYNC_SOURCES)}")
     if not load_settings(session, user.id)["x_api_sync_enabled"]:
-        return {"source": body.source, "status": "disabled"}
+        return {"source": body.source, "status": "disabled", "reason": "The setting x_api_sync_enabled is off."}
+    env = get_settings()
+    missing = [name for name, value in (("KOSHA_X_ACCESS_TOKEN", env.kosha_x_access_token), ("KOSHA_X_USER_ID", env.kosha_x_user_id)) if not value]
+    if missing:
+        return {"source": body.source, "status": "not_configured",
+                "reason": f"No X API credentials on the server: set {' and '.join(missing)} in .env and restart."}
     key, user_id = (user.id, body.source), user.id
     running = _sync_threads.get(key)
     if running is not None and running.is_alive():
