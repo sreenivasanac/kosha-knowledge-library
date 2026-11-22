@@ -79,7 +79,12 @@ export function Unavailable({ what }: { what: string }) {
 
 /** An error, with a retry when one is given. With `what`, a 404 is read as "this server does not have the endpoint yet". */
 export function ErrorNote({ error, retry, what }: { error: unknown; retry?: () => void; what?: string }) {
-  if (what && error instanceof ApiError && (error.status === 404 || error.status === 405 || error.code === 'demo')) return <Unavailable what={what} />;
+  if (what && error instanceof ApiError && (error.status === 404 || error.status === 405 || error.code === 'demo')) return (
+      // Announced like the error it stands in for: it often appears after a button press.
+      <div role="alert">
+        <Unavailable what={what} />
+      </div>
+    );
   return (
     <div role="alert" className="flex items-center gap-3 rounded-md border border-danger/40 px-3 py-2 text-sm text-danger">
       <span>{error instanceof Error ? error.message : String(error)}</span>

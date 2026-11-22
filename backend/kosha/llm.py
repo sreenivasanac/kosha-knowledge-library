@@ -102,7 +102,7 @@ def stt_model(session: Session, user_id: int) -> str:
 
 def stt_price_per_minute(model: str) -> float | None:
     """Dollars per minute of audio; None when neither the table above nor
-    LiteLLM's price map knows the model (the call is then recorded as unpriced)."""
+    LiteLLM's price map knows the model (`transcribe` then refuses the call)."""
     if model in STT_PRICE_PER_MINUTE_USD:
         return STT_PRICE_PER_MINUTE_USD[model]
     for name in (model, model.split("/", 1)[-1]):
@@ -205,12 +205,15 @@ def transcribe(session: Session, user_id: int, path: Path, model: str, minutes: 
         raise LLMError(f"{model}: the length of the recording is unknown, so its cost cannot be checked against the cap")
     _api_key(model, speech=True)  # refuse before anything is reserved
     price = stt_price_per_minute(model)
-    usd = (price or 0.0) * minutes
+    if price is None:  # a paid call recorded at $0 would never reach the cap
+        raise LLMError(f"{model}: no price is known for this speech-to-text model, so its cost cannot be checked against the cap; "
+                       "choose another stt_model")
+    usd = price * minutes
     row = _reserve(session, user_id, model, "transcribe", usd)
     try:
         result = stt_call(model, path, prompt)
     except Exception as exc:
         _release(session, row)
         raise LLMError(f"{model}: {type(exc).__name__}: {str(exc)[:300]}") from None
-    _settle(session, row, round(minutes * 60), usd, unit="seconds", **({} if price is not None else {"unpriced": True}))
+    _settle(session, row, round(minutes * 60), usd, unit="seconds")
     return {**result, "usd": usd}

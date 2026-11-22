@@ -361,7 +361,7 @@ export function Library({ archived = false }: { archived?: boolean }) {
   const syntaxError = query.error instanceof ApiError && query.error.status === 422;
   return (
     <div className="px-3 pb-24 sm:px-5">
-      <header data-sticky-header className="sticky top-0 z-20 -mx-3 space-y-1.5 border-b border-line bg-bg px-3 py-2 sm:-mx-5 sm:px-5">
+      <header data-sticky-header className="sticky top-(--banner-h,0px) z-20 -mx-3 space-y-1.5 border-b border-line bg-bg px-3 py-2 sm:-mx-5 sm:px-5">
         <div className="flex items-start gap-2">
           <button className="btn btn-ghost h-9 px-2 lg:hidden" aria-label="Open the sidebar" onClick={() => setState({ mobileNav: true })}>
             <Menu size={18} />

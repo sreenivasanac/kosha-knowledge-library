@@ -152,7 +152,8 @@ def _tag_op(session, user: User, namespace: str, op: dict) -> str:
         raise ValueError("Tag has child tags; pass recursive: true to delete them too")
     ids = [t.id for t, _ in tree]
     rows = list(session.scalars(select(ItemTag).where(ItemTag.tag_id.in_(ids)).order_by(ItemTag.item_id, ItemTag.tag_id)))
-    owners = [p for t, p in tree if t.origin != writes.AGENT and t.status != "proposed"]
+    # An agent-made tag the owner approved is the owner's from then on.
+    owners = [p for t, p in tree if t.status == "approved" or (t.origin != writes.AGENT and t.status != "proposed")]
     by_hand = sum(r.attached_by != writes.AGENT and not r.removed_by_user for r in rows)
     removed = sum(r.removed_by_user for r in rows)
     if kind in GATED_TAG_OPS and (owners or by_hand or removed):

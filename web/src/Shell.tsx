@@ -111,18 +111,21 @@ export const syncQuery = { queryKey: ['sync'], queryFn: () => api<SyncRow[]>('/a
 export const xApiSync = (rows: SyncRow[] | undefined) => rows?.find((r) => r.source === X_API_SYNC_SOURCE);
 
 /** Sidebar footer line: when the extension last delivered, and the X API sync's state when the server has one. */
-function SyncStatus({ lastCapture }: { lastCapture: string | null }) {
+function SyncStatus({ lastCapture, empty }: { lastCapture: string | null; empty: boolean }) {
   const caps = useCapabilities();
   const sync = xApiSync(useQuery({ ...syncQuery, enabled: caps.sync }).data);
   const running = !!sync?.running;
   const lastSync = sync?.updated_at;
   const failed = sync?.state?.status === 'parse_error';
+  // A library filled another way (an import, the demo's bundle) has items and no capture: say nothing about captures then.
+  const capture = lastCapture ? `Last capture ${ago(lastCapture)}` : empty ? 'Nothing captured yet' : '';
+  const text = running ? 'Syncing from the X API…' : failed ? 'The last API sync could not be read' : [capture, lastSync && `API sync ${ago(lastSync)}`].filter(Boolean).join(' · ');
+  if (!text) return null;
   return (
     <p role="status" className="flex items-center gap-1.5 border-t border-line px-3 py-1.5 text-xs text-ink-3" title={lastCapture ? `Last capture from the extension: ${fullDate(lastCapture)}` : undefined}>
       <RefreshCw size={11} aria-hidden className={running ? 'animate-spin' : ''} />
       <span className="min-w-0 flex-1 truncate">
-        {running ? 'Syncing from the X API…' : failed ? 'The last API sync could not be read' : lastCapture ? `Last capture ${ago(lastCapture)}` : 'Nothing captured yet'}
-        {!running && !failed && lastSync && ` · API sync ${ago(lastSync)}`}
+        {text}
       </span>
     </p>
   );
@@ -289,7 +292,7 @@ function Sidebar({ rail }: { rail: boolean }) {
           ))}
         </Section>
       </div>
-      <SyncStatus lastCapture={typeof stats.last_capture_at === 'string' ? stats.last_capture_at : null} />
+      <SyncStatus lastCapture={typeof stats.last_capture_at === 'string' ? stats.last_capture_at : null} empty={n('items') === 0} />
       <div className="flex items-center gap-1 border-t border-line px-2 py-1.5">
         <button className="btn btn-ghost px-2" onClick={go('/settings')} aria-current={location.pathname === '/settings' ? 'page' : undefined}>
           <Settings size={15} /> Settings
@@ -336,9 +339,10 @@ export function Shell() {
       </aside>
       {mobileNav && <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setState({ mobileNav: false })} />}
       {/* On a wide screen the page makes room for the drawer, so the reading column recentres without changing width (nothing reflows). */}
-      <div id="page" className={`${sidebarOpen ? 'lg:pl-64' : 'lg:pl-12'} ${drawerItem != null ? 'min-[1400px]:pr-(--drawer-w)' : ''}`}>
+      <div id="page" className={`${sidebarOpen ? 'lg:pl-64' : 'lg:pl-12'} ${drawerItem != null ? 'min-[1400px]:pr-(--drawer-w)' : ''} ${demo ? '[--banner-h:3rem] sm:[--banner-h:1.75rem]' : ''}`}>
         {demo && (
-          <p role="note" className="flex flex-wrap items-center justify-center gap-x-2 border-b border-line bg-accent-soft px-3 py-1 text-center text-xs">
+          // Pinned while the page scrolls. Its height is fixed (two lines on a phone, one above) so the sticky headers below can start under it.
+          <p role="note" className="sticky top-0 z-20 flex h-(--banner-h) flex-wrap content-center items-center justify-center gap-x-2 overflow-hidden border-b border-line bg-accent-soft px-3 py-1 text-center text-xs">
             {DEMO_BANNER}
             <a className="font-semibold text-accent hover:underline" href={REPO_URL}>
               Run your own

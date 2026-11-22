@@ -96,3 +96,40 @@ def test_no_speech_skips_the_paid_call(session, user, tmp_path, monkeypatch):
     session.refresh(video)
     assert (video.extract_status, video.extract_kind, video.extract_text) == ("done", "description", "A screen recording of a terminal.")
     assert (state["done"], state["no_speech"], state["spent_usd"]) == (1, 1, 0.0003)
+
+
+def test_each_piece_is_charged_by_its_own_length_and_an_unpriced_model_is_refused(session, user, tmp_path, monkeypatch):
+    item = Item(user_id=user.id, source="x", source_id="2", body="a talk")
+    session.add(item)
+    session.flush()
+    video = ItemMedia(item_id=item.id, source_key="v", type="video", duration_ms=21 * 60_000, original_url="https://video.twimg.com/a.mp4")
+    session.add(video)
+    session.commit()
+    pieces = [tmp_path / "audio_000.mp3", tmp_path / "audio_001.mp3"]
+    monkeypatch.setattr(media_text, "_download", lambda client, url, dest, max_bytes: dest.write_bytes(b"data"))
+    monkeypatch.setattr(media_text, "_audio_pieces", lambda source, folder: pieces)
+    monkeypatch.setattr(media_text, "has_speech", lambda pieces: True)
+    monkeypatch.setattr(media_text, "probe_duration_ms", lambda path: {pieces[0]: 20 * 60_000, pieces[1]: 60_000}[path])
+    minutes = []
+
+    def transcribe(session_, user_id, path, model, length, prompt=None):
+        minutes.append(length)
+        return {"text": "words", "lang": "en", "segments": None, "usd": 0.0}
+
+    monkeypatch.setattr(llm, "transcribe", transcribe)
+    media_text._transcribe(session, user.id, video, tmp_path)
+    assert minutes == [20, 1]  # not 10.5 each
+
+    monkeypatch.undo()
+    monkeypatch.setattr(llm, "_api_key", lambda model, speech=False: "k")
+    monkeypatch.setattr(llm, "stt_call", lambda *a, **k: pytest.fail("a model with no known price was called"))
+    with pytest.raises(llm.LLMError, match="no price"):
+        llm.transcribe(session, user.id, pieces[0], "nobody/unknown-stt", 1.0)
+    assert session.scalar(select(SpendLedger.id)) is None
+
+
+def test_start_resumes_files_left_queued(session, user, monkeypatch):
+    started = []
+    monkeypatch.setattr(media_text, "_worker", None)
+    monkeypatch.setattr(media_text.threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: started.append(kw["name"]), is_alive=lambda: True))
+    assert media_text.start(session, user.id, []) == {"queued": 0} and started == ["kosha-media-text"]  # no new rows, the worker still starts

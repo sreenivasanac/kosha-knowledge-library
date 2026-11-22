@@ -131,7 +131,8 @@ def _values(ctx: _Context, key: str, typed: str) -> list[dict]:
     escaped = typed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     if key == "from":
         rows = ctx.grouped(Item.author_handle, escaped.lstrip("@"), name=Item.author_name)
-        return [_row(_quote(name), name, "author", n) if name and len(handle) > OPAQUE_HANDLE_CHARS
+        # A name holding a `"` cannot be quoted (the query language has no escape): the handle is inserted instead.
+        return [_row(_quote(name), name, "author", n) if name and '"' not in name and len(handle) > OPAQUE_HANDLE_CHARS
                 else _row(f"@{handle}", f"{name} (@{handle})" if name else f"@{handle}", "author", n) for handle, name, n in rows]
     if key in ("domain", "site"):
         rows = ctx.grouped(ItemLink.domain, escaped, (ItemLink, ItemLink.item_id == Item.id))

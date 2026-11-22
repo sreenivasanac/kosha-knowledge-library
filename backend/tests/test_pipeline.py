@@ -733,6 +733,38 @@ def test_mcp_tag_changes_on_the_owners_work_need_confirm_and_can_be_undone(sessi
     assert session.get(Tag, mine_id).name == "Mine" and writes.find_tag(session, user.id, "main", "New") is None
 
 
+def test_undo_of_agent_tag_changes_keeps_later_tags_and_approved_agent_tags_need_confirm(session, user, lib):
+    from fastapi import HTTPException
+
+    from kosha import mcp_server
+    from kosha.api.items import undo_batch
+
+    old = tag(session, user, "Old", 410)
+    tag(session, user, "New", 411)
+    tag(session, user, "Mine", 412, old, origin="agent", status="proposed")
+    session.commit()
+    op = lambda **kw: mcp_server._tag_op(session, user, "main", kw)  # noqa: E731
+    batch = lambda reply: int(reply.split("batch=")[1].split()[0])  # noqa: E731
+    # a tag added beneath a moved tag afterwards follows it back
+    moved = op(op="move", path="Old/Mine", parent="New")
+    tag(session, user, "Later", 413, session.get(Tag, 412))
+    session.commit()
+    undo_batch(session, user.id, batch(moved))
+    session.expire_all()
+    assert (str(session.get(Tag, 412).path), str(session.get(Tag, 413).path)) == ("410.412", "410.412.413")
+    # a tag added beneath a created tag afterwards is not deleted with it
+    made = op(op="create", path="Fresh")
+    tag(session, user, "Kid", 414, writes.find_tag(session, user.id, "main", "Fresh"))
+    session.commit()
+    with pytest.raises(HTTPException) as refused:
+        undo_batch(session, user.id, batch(made))
+    assert refused.value.status_code == 409 and session.get(Tag, 414) is not None
+    # an agent-made tag the owner approved is the owner's
+    session.get(Tag, 412).status = "approved"
+    session.commit()
+    assert op(op="rename", path="Old/Mine", name="Yours").startswith("PREVIEW rename")
+
+
 def test_rerank_stage_and_similar_default(session, user, lib, monkeypatch):
     seen = []
 

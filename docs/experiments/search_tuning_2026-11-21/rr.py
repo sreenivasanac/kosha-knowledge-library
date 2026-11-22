@@ -34,10 +34,10 @@ for qid, _cat, q, _need in Q40 + Q20 + Q_LI:
         chunk = todo[start:start + 50]
         t = time.perf_counter()
         if method == "jev":
-            got = rr._jev(session, uid, text, chunk, texts)
+            got, _ = rr._jev(session, uid, text, chunk, texts)
         else:
             rr.VOYAGE_RERANK_MODEL = method
-            got = rr._voyage(session, uid, text, chunk, texts)
+            got, _ = rr._voyage(session, uid, text, chunk, texts)
         if len(chunk) == 50:
             times.append(round((time.perf_counter() - t) * 1000))
         mine.setdefault(qid, {}).update({str(i): s for i, s in got.items()})

@@ -369,7 +369,7 @@ export function ProposedPage() {
         <p className="max-w-2xl rounded-lg border border-dashed border-line px-6 py-10 text-center text-sm text-ink-2">Nothing to review. Proposed tags appear here after an organising run.</p>
       ) : (
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-          <ul aria-label="Proposed tag tree" data-own-scroll className="overflow-y-auto rounded-lg border border-line bg-surface lg:sticky lg:top-4 lg:max-h-[calc(100dvh-11rem)]">
+          <ul aria-label="Proposed tag tree" data-own-scroll className="overflow-y-auto rounded-lg border border-line bg-surface lg:sticky lg:top-[calc(1rem+var(--banner-h,0px))] lg:max-h-[calc(100dvh-11rem-var(--banner-h,0px))]">
             {rows.map((t) => {
               const on = t.id === focusId;
               const proposed = t.node.status === 'proposed';

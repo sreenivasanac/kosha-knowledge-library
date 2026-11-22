@@ -364,7 +364,9 @@ def search(session: Session, user_id: int, q: str, *, mode: str | None = None, s
                     try:
                         ids, judged = rerank_ids(session, user_id, query.rank_text, ids, rerank)
                         scores = [judged.get(i, 0.0) for i in ids]
-                        strong = {i for i, s in judged.items() if s >= RERANK_STRONG_SCORE[rerank]}
+                        # The reranker's threshold decides for what it judged; an item it did not read
+                        # (past its window, or without text) keeps the strength the rankers gave it.
+                        strong = (strong - judged.keys()) | {i for i, s in judged.items() if s >= RERANK_STRONG_SCORE[rerank]}
                     except RerankError:
                         result["notice"] = "rerank_unavailable"  # the fused order is served instead
                 if not weak:

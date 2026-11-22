@@ -95,11 +95,12 @@ def llm_summaries(session: Session, user_id: int, texts: dict[int, str], model: 
         spent += response.cost_usd
         try:
             rows = json.loads(response.choices[0].message.content or "{}").get("summaries") or []
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, AttributeError):  # not JSON, or not an object
             continue  # the batch stays without an LLM summary; the rule-built one remains
         wanted = {b["id"] for b in batch}
-        for row in rows:
-            if isinstance(row, dict) and row.get("id") in wanted and isinstance(row.get("summary"), str) and row["summary"].strip():
+        for row in rows if isinstance(rows, list) else []:
+            # the id is checked to be a number first: a list or object there cannot be looked up in a set
+            if isinstance(row, dict) and isinstance(row.get("id"), int) and row["id"] in wanted and isinstance(row.get("summary"), str) and row["summary"].strip():
                 out[row["id"]] = row["summary"].strip()
     return out, spent
 

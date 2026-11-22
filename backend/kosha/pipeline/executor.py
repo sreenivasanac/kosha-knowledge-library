@@ -152,7 +152,7 @@ def _filter(arg: str, offset: int):
 
 def _conditions(ctx: Ctx, query, offset: int) -> list:
     try:
-        return compile_filter(ctx.session, ctx.user_id, query, namespace=ctx.namespace)
+        return compile_filter(ctx.session, ctx.user_id, query, namespace=ctx.namespace, set_prefix=ctx.set_prefix)
     except QueryError as exc:
         raise QueryError(exc.message, exc.position + offset) from None
 
@@ -1095,6 +1095,11 @@ def run_query(session: Session, user_id: int, pipeline: str, confirm: str | None
         else:
             note = STAGES[stage.name](ctx, stage)
         ctx.spent += ctx.usd
+        # Ask's allowance is for the whole question: a later paid stage sees what this one left
+        # (Ask's own `_run_tool` puts the variable back when the pipeline ends).
+        allowance = jev.call_allowance.get()
+        if allowance is not None and ctx.usd:
+            jev.call_allowance.set(max(allowance - ctx.usd, 0.0))
         trace.append({"stage": "@" + stage.arg.strip() if stage.name == "@" else stage.name, "in": entered, "out": len(ctx.ids),
                       "usd": round(ctx.usd, 6), "ms": round((time.perf_counter() - started) * 1000), "note": note})
         if ctx.halted:

@@ -133,7 +133,9 @@ def _run_tool(session: Session, user_id: int, pipeline: str, jev_left: float) ->
         result = run_query(session, user_id, pipeline, set_prefix=SET_PREFIX)
     except QueryError as exc:
         session.rollback()
-        return f"ERROR at character {exc.position}: {exc.message}", {"pipeline": pipeline, "n": 0, "note": f"error: {exc.message}"[:200], "jev_usd": 0.0}
+        # Paid stages that finished before the failing one stay paid: what they took off the allowance is charged to the question.
+        paid = round(max(jev_left, 0.0) - jev.call_allowance.get(), 6)
+        return f"ERROR at character {exc.position}: {exc.message}", {"pipeline": pipeline, "n": 0, "note": f"error: {exc.message}"[:200], "jev_usd": paid}
     finally:
         jev.call_allowance.reset(token)
     body = result["text"][:RESULT_MAX_CHARS].replace(DATA_CLOSE, "")

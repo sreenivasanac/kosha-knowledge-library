@@ -119,6 +119,7 @@ def spend(user: User = Depends(current_user), session: Session = Depends(get_ses
 
 
 _sync_threads: dict[tuple[int, str], threading.Thread] = {}  # one running sync per user and source
+_sync_lock = threading.Lock()  # around "is one running?" and starting one, so two requests cannot both start
 
 
 @router.get("/sync")
@@ -151,16 +152,17 @@ def start_sync(body: SyncIn, user: User = Depends(current_user), session: Sessio
         return {"source": body.source, "status": "not_configured",
                 "reason": f"No X API credentials on the server: set {' and '.join(missing)} in .env and restart."}
     key, user_id = (user.id, body.source), user.id
-    running = _sync_threads.get(key)
-    if running is not None and running.is_alive():
-        return {"source": body.source, "status": "running"}
 
     def work():
         with SessionLocal() as own:
             x_api.sync_bookmarks(own, user_id)  # writes its summary to sync_state
 
-    _sync_threads[key] = threading.Thread(target=work, name="kosha-sync", daemon=True)
-    _sync_threads[key].start()
+    with _sync_lock:
+        running = _sync_threads.get(key)
+        if running is not None and running.is_alive():
+            return {"source": body.source, "status": "running"}
+        _sync_threads[key] = threading.Thread(target=work, name="kosha-sync", daemon=True)
+        _sync_threads[key].start()
     return {"source": body.source, "status": "started"}
 
 

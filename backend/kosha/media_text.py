@@ -270,11 +270,14 @@ def _transcribe(session: Session, user_id: int, media: ItemMedia, folder: Path) 
         media.duration_ms = probe_duration_ms(source)
     if not media.duration_ms:
         raise ExtractError(UNKNOWN_LENGTH)
-    minutes = media.duration_ms / 60000 / len(pieces)
+    # Pieces are cut at AUDIO_SEGMENT_S, so the last one is shorter: each is charged and capped by its
+    # own length (an even share only if ffmpeg cannot tell). A single piece is the whole recording.
+    lengths_ms = [media.duration_ms] if len(pieces) == 1 else [
+        probe_duration_ms(piece) or media.duration_ms / len(pieces) for piece in pieces]
     context = " ".join((session.get(Item, media.item_id).body or "").split())[:STT_PROMPT_MAX_CHARS] or None
     texts, lines, timed, spent, lang = [], [], True, 0.0, None
     for n, piece in enumerate(pieces):
-        result = llm.transcribe(session, user_id, piece, model, minutes, prompt=context)
+        result = llm.transcribe(session, user_id, piece, model, lengths_ms[n] / 60000, prompt=context)
         spent += result["usd"]
         lang = lang or result["lang"]
         texts.append(result["text"])
@@ -441,7 +444,8 @@ def start(session: Session, user_id: int, rows: list[ItemMedia], background: boo
     # ponytail: one worker thread in this process, taking the users' queues in
     # turn; move to a job table and a worker process if several servers share a queue.
     with _worker_lock:
-        if rows and (_worker is None or not _worker.is_alive()):
+        # Also with no new rows: files still queued from before a restart are picked up by the next start.
+        if _worker is None or not _worker.is_alive():
             _worker = threading.Thread(target=work, name="kosha-media-text", daemon=True)
             _worker.start()
     return {"queued": len(rows)}

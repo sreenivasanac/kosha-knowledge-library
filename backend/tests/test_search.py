@@ -441,6 +441,10 @@ def test_rerank_reorders_the_head_and_falls_back(session, user, library, monkeyp
     assert ids(reranked) == [plain[-1]] and reranked["weak_hidden"] == len(plain) - 1 and calls == [("retrieval", "jev")]
     assert ids(search(session, user.id, "retrieval", rerank="jev", weak=True)) == plain[::-1]
 
+    # Nothing could be judged (no text to read): the rankers' own strong matches stay.
+    monkeypatch.setattr(engine, "rerank_ids", lambda session, user_id, text, item_ids, method: (item_ids, {}))
+    assert ids(search(session, user.id, "retrieval", rerank="voyage")) == plain
+
     def broken(*args):
         raise engine.RerankError("no key")
 

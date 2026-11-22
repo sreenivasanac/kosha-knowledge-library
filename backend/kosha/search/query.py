@@ -712,8 +712,9 @@ DATE_COLUMNS = {"posted": Item.posted_at, "saved": SAVED_TIME, "captured": Item.
 
 
 class _Compiler:
-    def __init__(self, session: Session, user_id: int, skip: tuple = (), namespace: str = DEFAULT_NAMESPACE):
+    def __init__(self, session: Session, user_id: int, skip: tuple = (), namespace: str = DEFAULT_NAMESPACE, set_prefix: str = ""):
         self.session, self.user_id, self.skip = session, user_id, {id(n) for n in skip}
+        self.set_prefix = set_prefix  # a caller that saves its sets under a prefix (Ask) reads `@name` there first
         self.namespace = namespace  # the tag tree `#tag`, `tags:` and `is:untagged` read
         self._tags: list[tuple[Tag, str]] | None = None
 
@@ -782,9 +783,12 @@ class _Compiler:
         raise QueryError(f"#{ref.path} matches several tags: " + ", ".join("#" + path for _, path in found[:8]), ref.pos)
 
     def result_set(self, ref: SetRef) -> ColumnElement[bool]:
-        ids = self.session.scalar(select(ResultSet.item_ids).where(
-            ResultSet.user_id == self.user_id, ResultSet.name == ref.name,
-            or_(ResultSet.expires_at.is_(None), ResultSet.expires_at > func.now())))
+        ids = None
+        for wanted in dict.fromkeys((self.set_prefix + ref.name, ref.name)):  # the same order as the pipeline's `@name` source
+            if ids is None:
+                ids = self.session.scalar(select(ResultSet.item_ids).where(
+                    ResultSet.user_id == self.user_id, ResultSet.name == wanted,
+                    or_(ResultSet.expires_at.is_(None), ResultSet.expires_at > func.now())))
         if ids is None:
             raise QueryError(f"No result set named @{ref.name}. For an author, use from:@{ref.name}", ref.pos)
         return Item.id.in_(ids)
@@ -802,7 +806,11 @@ class _Compiler:
             column = DATE_COLUMNS[key]
             return and_(column >= lo if lo is not None else true(), column < hi if hi is not None else true())
         if key == "from":
-            return func.lower(Item.author_handle).in_(self.authors(v))
+            by_handle = func.lower(Item.author_handle).in_(self.authors(v))
+            if v.startswith("@"):
+                return by_handle
+            # An author the source gave no handle for can only be found by the exact name.
+            return or_(by_handle, and_(Item.author_handle.is_(None), func.lower(Item.author_name) == v.lower()))
         if key in ("quotes", "replies-to"):
             kind = "quotes" if key == "quotes" else "replies_to"
             if v.isdigit():
@@ -913,7 +921,7 @@ def _mentions_archived(node) -> bool:
 
 
 def compile_filter(session: Session, user_id: int, query: Query, lift_rank_atoms: bool = False,
-                   namespace: str = DEFAULT_NAMESPACE) -> list[ColumnElement[bool]]:
+                   namespace: str = DEFAULT_NAMESPACE, set_prefix: str = "") -> list[ColumnElement[bool]]:
     """The query as SQL conditions on `Item`, scoped to the user. By default a
     query sees saved, non-archived items. With `lift_rank_atoms` the top-level
     bare words are left out, for the ranked modes where they rank, not filter."""
@@ -925,7 +933,7 @@ def compile_filter(session: Session, user_id: int, query: Query, lift_rank_atoms
     if query.filter is not None:
         # A term scoped to a field (`title:x`, `in:note x`) stays a filter: the semantic ranker cannot honour the field.
         lifted = tuple(a for a in query.rank_atoms if not a.fields) if lift_rank_atoms else ()
-        compiler = _Compiler(session, user_id, lifted, namespace)
+        compiler = _Compiler(session, user_id, lifted, namespace, set_prefix)
         root = query.filter if isinstance(query.filter, And) else And((query.filter,))
         where.append(compiler.node(root))
     return where

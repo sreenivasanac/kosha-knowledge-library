@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
 from kosha import storage
-from kosha.api.tags import attach_tag, detach_tag, get_item
+from kosha.api.tags import attach_tag, detach_tag, get_item, move_tag
 from kosha.auth import current_user
 from kosha.config import DEFAULT_PAGE_SIZE, PAGE_SIZES
 from kosha.db import get_session
@@ -181,12 +181,20 @@ def undo_batch(session: Session, user_id: int, batch_id: int) -> None:
     # parents first; their item rows follow below.
     try:
         if before.get("created_tags"):
+            # Deleting a tag cascades to its children: tags added beneath a created one since are not this batch's to drop.
+            if session.scalar(select(Tag.id).where(Tag.user_id == user_id, Tag.parent_id.in_(before["created_tags"]),
+                                                   Tag.id.not_in(before["created_tags"])).limit(1)) is not None:
+                session.rollback()
+                raise HTTPException(status.HTTP_409_CONFLICT, "Cannot undo: tags were added beneath a tag this change created; move or delete them first")
             session.execute(delete(Tag).where(Tag.user_id == user_id, Tag.id.in_(before["created_tags"])))
         for row in sorted(before.get("tags", []), key=lambda r: r["path"].count(".")):
             tag = session.get(Tag, row["id"])
             if tag is None:
                 session.add(Tag(user_id=user_id, **row))
             elif tag.user_id == user_id:
+                if str(tag.path) != row["path"]:
+                    # Moved since: go back through move_tag, so tags added beneath it afterwards get their paths rewritten too.
+                    move_tag(session, tag, session.get(Tag, row["parent_id"]) if row["parent_id"] else None)
                 for column, value in row.items():
                     setattr(tag, column, value)
             session.flush()

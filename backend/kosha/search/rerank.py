@@ -51,6 +51,7 @@ def _voyage(session: Session, user_id: int, query: str, ids: list[int], texts: d
         raise RerankError(f"Voyage answered {response.status_code}: {response.text[:200]}")
     body = response.json()
     usd = record_spend(session, user_id, VOYAGE_RERANK_MODEL, "rerank", body["usage"]["total_tokens"], items=len(ids))
+    session.commit()  # paid: the ledger row stays even if a later pipeline stage fails and rolls back (as jev.ask does)
     return {ids[row["index"]]: row["relevance_score"] for row in body["data"]}, float(usd)
 
 

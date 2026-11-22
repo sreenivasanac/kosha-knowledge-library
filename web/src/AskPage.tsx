@@ -156,6 +156,8 @@ export function AskPage() {
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
+    // A failed question is not sent again (and paid for again) just because the page is shown again; "Try again" still asks.
+    retryOnMount: false,
   });
   const ids = ask.data?.items ?? [];
   // The cited items through the normal list endpoint, so they render (and act) as cards do everywhere.

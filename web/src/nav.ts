@@ -68,7 +68,9 @@ function clean(s: LibrarySearch): LibrarySearch {
 
 /** Changes some URL state of the current library view. */
 export function setSearch(patch: LibrarySearch, replace = false) {
-  void router.navigate({ to: hasDrawer() ? pathname() : '/', search: clean({ ...currentSearch(), ...patch }), replace });
+  // A Jev result set (`snap`) is a filter of the library; Ask does not show one, so it opens there.
+  const stay = hasDrawer() && (isLibraryPath() || patch.snap == null);
+  void router.navigate({ to: stay ? pathname() : '/', search: clean({ ...currentSearch(), ...patch }), replace });
 }
 
 /** Shows the library filtered by `q`, keeping the view, sort, mode and page size. */

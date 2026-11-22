@@ -176,6 +176,28 @@ def test_ask_may_rerank_and_its_cost_comes_off_the_allowance(session, user, fake
     assert [c[2] for c in calls] == [ask_module.JEV_ALLOWANCE_USD, pytest.approx(ask_module.JEV_ALLOWANCE_USD - 0.005)]
 
 
+def test_ask_allowance_is_shared_by_the_stages_of_a_pipeline_and_kept_on_an_error(session, user, monkeypatch):
+    first, second = add_item(session, user, "1", "pgvector HNSW tuning notes"), add_item(session, user, "2", "pgvector and a cat")
+    seen = []
+
+    def fake(session_, user_id, text, ids, method):
+        seen.append(jev.call_allowance.get())
+        return ids, {i: 0.5 for i in ids}, 0.005
+
+    monkeypatch.setattr(ask_module.run_query.__globals__["reranking"], "rerank_with_cost", fake)
+    # the second paid stage sees what the first left; the later failing stage does not make the question forget what was paid
+    _, step = ask_module._run_tool(session, user.id, 'where pgvector | rerank voyage "x" | rerank voyage "x" | sort nosuchkey', 0.02)
+    assert seen == [0.02, pytest.approx(0.015)] and step["note"].startswith("error") and step["jev_usd"] == 0.01
+    assert jev.call_allowance.get() is None  # put back when the pipeline ends
+
+
+def test_from_finds_an_author_without_a_handle_by_exact_name(session, user):
+    session.add(Item(user_id=user.id, source="linkedin", source_id="n1", body="a post", author_name="Ada Example"))
+    session.commit()
+    count = lambda q: run_query(session, user.id, f"where {q} | count")["n"]  # noqa: E731
+    assert count('from:"Ada Example"') == 1 and count('from:"@Ada Example"') == 0 and count("from:nobody") == 0
+
+
 # --- Summaries --------------------------------------------------------------
 def test_rule_summary_takes_the_start_of_a_media_extract(session, user):
     item = add_item(session, user, "1", "watch this")
@@ -199,7 +221,8 @@ def test_rule_summary_takes_the_start_of_a_media_extract(session, user):
 def test_llm_summaries_batches_and_keeps_only_known_ids(session, user, fake_llm):
     texts = {n: f"text {n}" for n in range(1, summaries.LLM_BATCH_ITEMS + 3)}
     fake_llm.script = [
-        reply(json.dumps({"summaries": [{"id": 1, "summary": " One. "}, {"id": 2, "summary": None}, {"id": 777, "summary": "stray"}]})),
+        reply(json.dumps({"summaries": [{"id": 1, "summary": " One. "}, {"id": 2, "summary": None}, {"id": 777, "summary": "stray"},
+                                         {"id": [], "summary": "an id that is no number"}]})),
         reply("not json"),
     ]
     out, spent = summaries.llm_summaries(session, user.id, texts)
@@ -362,6 +385,7 @@ def test_ask_saves_sets_under_its_own_prefix(session, user):
     assert step["n"] == 1 and session.scalar(select(ResultSet.item_ids).where(ResultSet.name == "seeds")) == mine
     assert session.scalar(select(ResultSet.item_ids).where(ResultSet.name == "ask.seeds")) == [first.id]
     assert ask_module._run_tool(session, user.id, "@seeds | count", 0.0)[1]["n"] == 1  # Ask reads its own set back
+    assert ask_module._run_tool(session, user.id, "where @seeds pgvector | count", 0.0)[1]["n"] == 1  # as a filter too
     assert run_query(session, user.id, "@seeds | count")["n"] == 1 and mine != [first.id]  # the user's set is as it was
 
 
@@ -521,6 +545,7 @@ def test_linkedin_label_and_card_text():
     assert posted_at_from_label("4d •", captured) == datetime(2026, 11, 17, tzinfo=UTC)
     assert posted_at_from_label("Reposted from Example • 1yr • ", captured).year == 2025
     assert posted_at_from_label(None, captured) is None and posted_at_from_label("soon", captured) is None
+    assert posted_at_from_label("9999yr •", captured) is None  # before any date: treated as no label
     header, label, body = split_raw_text("Cy \n• 3rd+\nWriter\n\nReposted from Di • 2w • \n\nShort post\n\nA title\n\nexample.com", "A title\n\nexample.com")
     assert (header, label, body) == (["Cy", "• 3rd+", "Writer"], "Reposted from Di • 2w •", "Short post")
     assert split_raw_text("no label here", "") == ([], None, "")

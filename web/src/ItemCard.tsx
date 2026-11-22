@@ -80,7 +80,13 @@ function Body({ item, clamp, className = '' }: { item: Item; clamp: number | nul
   // Measured, not guessed from the character count: short lines and wide ones clamp alike.
   useLayoutEffect(() => {
     const el = text.current;
-    if (el && clamp != null && !open) setLong(el.scrollHeight > el.clientHeight + 1);
+    if (!el || clamp == null || open) return;
+    const measure = () => setLong(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    // A narrower card (window resized, sidebar opened) wraps onto more lines: measure again.
+    const resized = new ResizeObserver(measure);
+    resized.observe(el);
+    return () => resized.disconnect();
   }, [body, clamp, open]);
   if (!body) return null;
   return (

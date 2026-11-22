@@ -78,7 +78,10 @@ def posted_at_from_label(label: str | None, captured_at: datetime | None) -> dat
     match = LABEL_RE.search(label or "")
     if not match or captured_at is None:
         return None
-    return captured_at - timedelta(days=int(match.group(1)) * LABEL_UNIT_DAYS[match.group(2)])
+    try:
+        return captured_at - timedelta(days=int(match.group(1)) * LABEL_UNIT_DAYS[match.group(2)])
+    except OverflowError:  # "9999yr": no such date; one bad label must not stop the capture
+        return None
 
 
 def split_raw_text(raw_text: str | None, embedded_text: str | None) -> tuple[list[str], str | None, str]:

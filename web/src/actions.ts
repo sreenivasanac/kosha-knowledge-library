@@ -152,7 +152,8 @@ async function copy(text: string, what: string) {
 }
 
 /** An item on the page, or one the drawer loaded (a quoted post, a thread parent). */
-const itemById = (id: number): Item | undefined => getState().pageItems.get(id) ?? queryClient.getQueryData<Item>(['item', id]);
+// Off the drawer pages the focused id is not an item's (a tag's on the tag pages), so the item cache is not asked there.
+const itemById = (id: number): Item | undefined => getState().pageItems.get(id) ?? (hasDrawer() ? queryClient.getQueryData<Item>(['item', id]) : undefined);
 const targetItems = (): Item[] => targetIds().map(itemById).filter((i): i is Item => !!i);
 
 export const markdownOf = (i: Item) => {

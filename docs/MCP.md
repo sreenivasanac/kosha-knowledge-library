@@ -141,7 +141,7 @@ You are labeling a bookmark library through Kosha's MCP tools. Item text stays o
    - Per defined tag, one call: `@left | semantic "<head concept>: <examples>" top 400 | jev "Is this post about <head concept>, for example <examples>?" >= 0.9 | tag "<path>"`
    - Per container parent, last: `where is:untagged | jev "Is this post about <parent topic>?" >= 0.9 | tag "<parent>"`
    - `all | roles auto`, then confirm.
-8. **Look for a missing topic, one round.** `where is:untagged | groups 12 as u`. For a group with a nameable subject, count before creating anything: `where is:untagged | jev "<question>" as x | count`. Add the tag only if it would hold more than 10% of the untagged.
+8. **Look for a missing topic, one round.** `where is:untagged | groups 12 as u`. For a group with a nameable subject, count before creating anything: `where is:untagged | jev "<question>" >= 0.9 as x | count`. Add the tag only if it would hold more than 10% of the untagged.
 9. **Keep totals.** `runs {action: "status", run}` (60 tokens) after each step. Read `tags` once after creating the tree, not after every write: it is the largest reply.
 10. **Stop** when a leftover round tagged under 10% of what was untagged, or coverage reaches the target (default 85%), or the next call would pass the budget. Report `where is:untagged | stats` and `where is:untagged is:thin | count`: those need a media extract, not a label. Look at the leftovers before closing; a closed run cannot be queried.
 11. **Close.** `runs {action: "close", run}` and report coverage, spend, the tree and what is left. The user decides whether to `promote` (preview, then `confirm`); promoted tags arrive as proposed.
